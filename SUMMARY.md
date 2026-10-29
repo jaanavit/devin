@@ -422,3 +422,60 @@ Decisions / deviations:
 Stubs / needed to make real:
 - `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_WEBHOOK_SECRET` (Sentry internal integration), `DEVIN_API_KEY` + `DEVIN_ORG_ID` (Devin service user with `UseDevinSessions`), and optionally a `DEPS_PR_TOKEN` secret so CI also runs on the weekly PR.
 - Same push blocker as Phase 8 (`workflow` scope needed for `.github/workflows/*`).
+
+## Phase 10 — Self-service request flow
+
+**Branch:** `phase-10-self-service`, stacked on `phase-9-maintenance`.
+
+Built:
+- **`docs/requesting-a-tool.md`** for non-engineers:
+  - how to request (post in `#internal-tools-requests`, tag @Devin, reference `playbooks/new-tool.devin.md`), what happens next (clarifying questions in the thread, a `tool: <name>` PR, engineer review, CI policy gates), and what every tool gets automatically (SSO, roles, audit, PII masking, maker-checker);
+  - the **request template**: tool name, owner team, users and roles, data, actions, approval rules, notifications, lifecycle;
+  - the short-lived tool policy;
+  - the worked **example**: an MCC backfill tool for last month's transactions, Risk team only, with Analyst-submits / Reviewer-approves runs, batch audit, Slack via `notify()`, short-lived and removed afterwards. The seed already contains ~2% transactions with missing MCCs to exercise it.
+- **Playbook updated to match:**
+  - `lifecycle` is now one of the required inputs;
+  - Devin must ask in the request thread rather than guess roles or approval rules;
+  - catalog entries can be marked `lifecycle: "short-lived"`;
+  - new **step 8: removing a short-lived tool**: delete the route and catalog entry, keep the data and audit trail, PR `tool: remove <name>`.
+- **`scripts/docs/request-template.test.ts`** fails the build if the template stops covering any input the playbook asks for, if the example omits a field, or if the PR naming or roles drift between the two documents.
+- README links the playbooks, the request doc and the maintenance doc, and lists the new scripts.
+
+Verification: 3 new tests (208 total); lint, typecheck, policy, test and build pass.
+
+---
+
+## Final status
+
+| Area | State |
+| --- | --- |
+| Phases 0–7 | Merged into stacked branches, PRs #1–#8 open on `jaanavit/devin` |
+| Phases 8–10 | Committed locally (`phase-8-ci-guardrails` → `phase-9-maintenance` → `phase-10-self-service`, plus `ci-demo-policy-violation`). **Not pushed**: GitHub rejects workflow files from a token without the `workflow` scope. |
+| Tests | 208 passing (unit + DB integration against Postgres) |
+| Never-cut items | Audit log, RBAC, PII masking, maker-checker, all three client apps, CI policy checks, maintenance relay: all built |
+
+### Stubbed integrations (what's needed to make them real)
+- **Identity:** a real OIDC IdP (issuer, client ID/secret) to replace `mock-oidc`; keep `GROUP_ROLE_MAP`.
+- **Slack:** `SLACK_WEBHOOK_URL` (`hooks.slack.com` only). Everything posts through `notify()`.
+- **Sentry:** `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_WEBHOOK_SECRET` (see `docs/maintenance.md`).
+- **Devin API:** `DEVIN_API_KEY` + `DEVIN_ORG_ID` (service user with `UseDevinSessions`).
+- **Deploys:** a hosting target, via `<ENV>_DEPLOY_HOOK_URL` secrets or a provider CLI in `scripts/deploy.sh`. Plus branch protection on `main` requiring the three CI jobs, and a required reviewer on the `production` environment.
+- **LLM:** `LLM_API_KEY`, only needed if Phase 3b (AI-assisted KYC) is built.
+
+### Deviations from the plan (details in each phase)
+- Homebrew Postgres instead of Docker on the build machine (`docker-compose.yml` still provided).
+- Auth.js v4 (stable) instead of v5 (beta); stable majors of Next/Prisma/TypeScript (newer majors listed by the weekly upgrade job).
+- Phases 3–5 built in parallel worktrees, so their PRs are siblings on `phase-2-playbooks`, combined in `phase-3-4-5-integration` before Phase 6.
+- Phase 3b (AI-assisted KYC) skipped. It's first on the plan's cut list.
+- Transaction investigation is open to Reviewers as well as Analysts, so "PII masked by role" is meaningful.
+
+### Security rule exceptions
+- Public routes: Auth.js (`/api/auth/*`), `/login`, the static `/403` page, and the signature-authenticated Sentry webhook. All are listed with justifications in `scripts/policy/exceptions.ts`.
+
+### Known gaps / suggested next steps
+1. Grant the `workflow` scope and push Phases 8–10; open the violation PR and confirm CI fails on POLICY-1; enable branch protection.
+2. Pick a host and wire up `scripts/deploy.sh` (app, payments-mock, `pnpm jobs:worker`, `pnpm db:deploy` per environment).
+3. Audit denied attempts (e.g. blocked self-approvals) for surveillance.
+4. Encrypt or tokenize PII columns at rest; currently plaintext in the prototype DB.
+5. Build Phase 3b if wanted; extend linked accounts to multi-hop for fraud-ring investigation.
+6. Plan the major upgrades (Next 16, Prisma 7, TypeScript 7) flagged by the weekly job.

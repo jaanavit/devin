@@ -2,7 +2,11 @@
 
 A code-based replacement for the core of Power Apps: a shared internal-tools platform (SSO, RBAC, audit, approvals, PII masking, guardrails) plus the tools built on it.
 
-See [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) for the security rules every change must follow, and [`SUMMARY.md`](SUMMARY.md) for build status.
+See [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) for the security rules every change must follow (and the CI policy checks that enforce them), and [`SUMMARY.md`](SUMMARY.md) for build status.
+
+- Building a tool: [`playbooks/new-tool.devin.md`](playbooks/new-tool.devin.md). Porting a Power Apps app: [`playbooks/port-app.devin.md`](playbooks/port-app.devin.md)
+- Requesting a tool (non-engineers): [`docs/requesting-a-tool.md`](docs/requesting-a-tool.md)
+- Sentry, the Sentry → Devin relay, weekly dependency upgrades: [`docs/maintenance.md`](docs/maintenance.md)
 
 ## Layout
 
@@ -75,3 +79,6 @@ From the command line, `scripts/smoke.sh u_ada /audit` signs in as a demo user a
 | `pnpm typecheck` | `tsc --noEmit` in every package |
 | `pnpm test` | Vitest (unit + DB integration tests against `DATABASE_URL_TEST`) |
 | `pnpm build` | Builds payments-mock and the Next.js app |
+| `pnpm policy` | Security policy checks (audit on write, requireRole, no PII logging, outbound allowlist) |
+| `pnpm db:check` | Migration check (needs `SHADOW_DATABASE_URL`, an empty disposable DB) |
+| `pnpm bench:search` | Times the transaction searches on the current DB |
