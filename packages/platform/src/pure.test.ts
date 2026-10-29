@@ -105,4 +105,9 @@ describe("outbound allowlist", () => {
     expect(isAllowedOutbound("https://hooks.slack.com.evil.io", env)).toBe(false);
     expect(isAllowedOutbound("not a url", env)).toBe(false);
   });
+
+  it("never trusts the host of SLACK_WEBHOOK_URL itself", () => {
+    const tampered = { SLACK_WEBHOOK_URL: "https://attacker.example.com/hook" } as unknown as NodeJS.ProcessEnv;
+    expect(isAllowedOutbound("https://attacker.example.com/hook", tampered)).toBe(false);
+  });
 });

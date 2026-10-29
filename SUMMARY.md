@@ -17,6 +17,8 @@ Running log of what was built per phase, deviations, security exceptions, stubs,
 | 4 Refunds | `phase-4-refunds` | [#6](https://github.com/jaanavit/devin/pull/6) | `phase-2-playbooks` |
 | 5 Feature flags | `phase-5-flags` | [#4](https://github.com/jaanavit/devin/pull/4) | `phase-2-playbooks` |
 | 3+4+5 combined | `phase-3-4-5-integration` | (base for Phase 6) | `phase-2-playbooks` |
+| 6 Transaction investigation | `phase-6-transactions` | [#7](https://github.com/jaanavit/devin/pull/7) | `phase-3-4-5-integration` |
+| 7 Workflows | `phase-7-workflows` | [#8](https://github.com/jaanavit/devin/pull/8) | `phase-6-transactions` |
 
 ## Phase 0 — Repo setup
 
@@ -251,7 +253,7 @@ Known gaps / next steps:
 
 ## Phase 6 — Transaction investigation
 
-**Branch:** `phase-6-transactions`, stacked on `phase-3-4-5-integration` (PR: see table above once opened)
+**Branch:** `phase-6-transactions`, stacked on `phase-3-4-5-integration` (PR [#7](https://github.com/jaanavit/devin/pull/7))
 
 Built (following `playbooks/new-tool.devin.md`):
 - **Catalog entry** `transactions` → `/transactions`, owner Risk, roles `TRANSACTIONS_ROLES = [Analyst, Reviewer]`. Admins get 403.
@@ -297,3 +299,46 @@ Platform changes: none. Security rule exceptions: none.
 Known gaps / next steps:
 - Linked accounts are one hop. A graph view (multi-hop, e.g. to reach `cus_900008` from `cus_900001`) would help ring investigations.
 - Deep OFFSET pagination gets slower on very large result sets; keyset pagination would fix it if needed.
+
+## Phase 7 — Workflows
+
+**Branch:** `phase-7-workflows`, stacked on `phase-6-transactions` (PR [#8](https://github.com/jaanavit/devin/pull/8))
+
+Built:
+- **`notify({ event, entity, text })`** in `packages/platform`. It posts to `SLACK_WEBHOOK_URL` via `outboundFetch` and returns `sent`, `stubbed` or `failed`. It never throws, so a Slack problem can't undo or fail the action that triggered it. When the webhook isn't configured it logs `slack stub: <event> <entity type> <entity id>`, never the message text.
+- **Refunds and feature flags refactored to use `notify()`.** Their inline Slack helpers are gone. All 56 existing Refunds and Flags tests pass with no test changes, which shows the behavior (webhook payloads, stub log lines, failure handling) is unchanged.
+- **Job runner** (`packages/platform/src/jobs.ts`):
+  - `JobDefinition` with `{ everyMinutes }` or `{ dailyAtUtc: "HH:MM" }` schedules;
+  - `runJob()` records each execution as a `JobRun` (new model + migration) and audits it as `job.run` (job, trigger, status, PII-redacted summary);
+  - a partial unique index allows only one `RUNNING` run per job, so the scheduler and a manual trigger can't run a job twice at once (`JobAlreadyRunningError`);
+  - `RUNNING` rows older than 1 hour are marked `FAILED (stale)` so a crashed run doesn't block the job forever;
+  - failures store the error class only (DB error messages can contain row values);
+  - `runDueJobs()` / `startScheduler()` check for due jobs every minute.
+- **Approval reminders** (`approval-reminders` job, every 15 min, in the platform so every approval kind gets it): finds approval requests `PENDING` for more than 1 hour, sends one Slack digest with kind, entity, amount, age, approver roles and deep links, sets `lastReminderAt` with a conditional update (no double reminders from concurrent runs), and audits `approval.remind`. A request is reminded at most once per 24 hours; batches are capped at 50 per run.
+- **Nightly ops summary** (`nightly-ops-summary`, daily 02:00 UTC, `apps/internal-tools/lib/jobs`): KYC cases past SLA (count, by risk, 10 most overdue) and refunds awaiting approval (count, total, 10 oldest), with deep links and no customer data.
+- **Manual trigger:** Admin-only `/jobs` page (catalog entry "Scheduled jobs") shows each job, its schedule, last run and next run, a "Run now" button, and the 25 most recent runs. CLI: `pnpm jobs:run <name>`. Scheduler process: `pnpm jobs:worker`.
+- Playbooks updated: `new-tool` now says to use `notify()` and shows how to add a job; `port-app` maps notification, reminder and scheduled flows to these.
+
+Security fix found while testing: the outbound allowlist trusted whatever host `SLACK_WEBHOOK_URL` pointed at, so a misconfigured or tampered value could send notifications anywhere. Slack is now allowed only via the static `hooks.slack.com` entry, with a test for it.
+
+Verification:
+- 19 new tests (178 total):
+  - `notify` sends, stubs without leaking the text, and returns `failed` without throwing on HTTP errors, network errors and non-allowlisted hosts;
+  - `isDue` / `nextRunAt` for both schedule types;
+  - `runJob` success (PII redacted, audited), failure (error class only), concurrency rejection, stale-run recovery, `runDueJobs`;
+  - reminders: only requests pending more than 1 hour, once, re-reminded after 24 hours, decided requests skipped, digest text, audit rows, nothing posted when nothing is due;
+  - `/jobs` Admin-only (page and action);
+  - **manually triggering `nightly-ops-summary` posts the expected summary to Slack** (correct counts and ordering, closed and on-time items excluded, no customer data), and the run is recorded and audited as the Admin.
+- On the full seed: `pnpm jobs:run nightly-ops-summary` → `SUCCEEDED` (115 KYC cases past SLA, 40 refunds pending, $54,764.15). `pnpm jobs:worker` picked up `approval-reminders` immediately and reminded about the first 50 overdue approvals.
+
+Decisions / deviations:
+- **Reminders are a digest**, one message per run rather than one per request, to avoid flooding the channel. The first reminder comes after 1 hour, then at most once a day per request.
+- **The scheduler is an in-process loop** (`pnpm jobs:worker`) rather than cron or a queue. The `JobRun` table and the one-running-per-job index make it safe to run more than one worker, or to trigger a job manually while the worker runs.
+- Platform changes: `notify`, `jobs`, `approval-reminders` (all called for by the spec). Schema change: `JobRun` model.
+
+Stubs / needed to make real:
+- `SLACK_WEBHOOK_URL` (currently stubbed). A process manager or container to keep `pnpm jobs:worker` running in each environment (Phase 8 deploy).
+
+Known gaps / next steps:
+- Blocked actions (e.g. a denied self-approval) still aren't audited or notified.
+- No per-team Slack channels; everything goes to one webhook.

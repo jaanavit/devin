@@ -81,6 +81,30 @@ model ApprovalRequest {
   @@index([entityType, entityId])
 }
 
+enum JobRunStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+/// One execution of a scheduled job. A partial unique index (see migration) allows at most one
+/// RUNNING row per job, so a job can never run twice concurrently (scheduler + manual trigger).
+model JobRun {
+  id         String       @id @default(cuid())
+  job        String
+  /// "schedule" or "manual"
+  trigger    String
+  actorId    String
+  status     JobRunStatus @default(RUNNING)
+  startedAt  DateTime     @default(now())
+  finishedAt DateTime?
+  /// Non-PII summary returned by the job (counts, IDs, notify outcome).
+  result     Json?
+  error      String?
+
+  @@index([job, startedAt])
+}
+
 // ---------------------------------------------------------------------------
 // Product domain
 // ---------------------------------------------------------------------------

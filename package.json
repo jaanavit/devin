@@ -17,6 +17,8 @@
     "db:deploy": "pnpm --filter @fintech/models migrate:deploy",
     "db:seed": "tsx scripts/seed.ts",
     "bench:search": "tsx scripts/bench/transaction-search.ts",
+    "jobs:worker": "tsx scripts/jobs-worker.ts",
+    "jobs:run": "tsx scripts/jobs-run.ts",
     "postinstall": "pnpm --filter @fintech/models generate"
   },
   "devDependencies": {

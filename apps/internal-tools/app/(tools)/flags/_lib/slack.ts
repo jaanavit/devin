@@ -1,10 +1,9 @@
-import { outboundFetch } from "@fintech/platform/server";
+import { notify } from "@fintech/platform/server";
 import { slackText, type FlagAuditAction, type FlagSnapshot } from "./rules";
 
-// TODO(Phase 7): replace with notify() from @fintech/platform.
 /**
- * Posts a prod flag change to Slack. Called after the change has committed, so a Slack failure is
- * logged (error class only) and never rolls back or fails the change. Skipped when unconfigured.
+ * Posts a prod flag change to Slack via the platform `notify()`. Called after the change has
+ * committed; `notify()` never throws, so a Slack failure never rolls back or fails the change.
  */
 export async function postProdFlagChange(change: {
   action: FlagAuditAction;
@@ -13,19 +12,5 @@ export async function postProdFlagChange(change: {
   actorEmail: string;
   reason: string | null;
 }): Promise<void> {
-  const url = process.env.SLACK_WEBHOOK_URL;
-  if (!url) {
-    console.info(`slack stub: ${change.action} on prod flag ${change.after.key} (SLACK_WEBHOOK_URL not set)`);
-    return;
-  }
-  try {
-    const res = await outboundFetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: slackText(change) }),
-    });
-    if (!res.ok) console.error(`Slack webhook failed for ${change.action} on prod flag ${change.after.key}: HTTP ${res.status}`);
-  } catch (err) {
-    console.error(`Slack webhook failed for ${change.action} on prod flag ${change.after.key}:`, err instanceof Error ? err.name : typeof err);
-  }
+  await notify({ event: change.action, entity: { type: "prod flag", id: change.after.key }, text: slackText(change) });
 }
