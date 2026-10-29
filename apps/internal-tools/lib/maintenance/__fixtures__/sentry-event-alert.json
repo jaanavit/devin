@@ -1,0 +1,37 @@
+{
+  "action": "triggered",
+  "installation": { "uuid": "7a485448-a9e2-4c85-8a3c-4f44175783c9" },
+  "data": {
+    "event": {
+      "event_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "issue_id": "4504123456",
+      "title": "TypeError: Cannot read properties of undefined (reading 'amountCents')",
+      "culprit": "app/(tools)/refunds/_lib/process in processRefund",
+      "level": "error",
+      "project": "internal-tools",
+      "web_url": "https://fintech.sentry.io/issues/4504123456/events/a1b2c3d4e5f60718293a4b5c6d7e8f90/",
+      "issue_url": "https://sentry.io/api/0/issues/4504123456/",
+      "exception": {
+        "values": [
+          {
+            "type": "TypeError",
+            "value": "Cannot read properties of undefined (reading 'amountCents') for customer jane.doe@example.com ssn 123-45-6789",
+            "stacktrace": {
+              "frames": [
+                { "filename": "node:internal/process/task_queues", "function": "processTicksAndRejections", "lineno": 95, "in_app": false },
+                { "filename": "app/(tools)/refunds/actions.ts", "function": "approveRefund", "lineno": 89, "colno": 27, "in_app": true },
+                { "filename": "app/(tools)/refunds/_lib/process.ts", "function": "processRefund", "lineno": 22, "colno": 61, "in_app": true, "vars": { "ssn": "123-45-6789" } }
+              ]
+            }
+          }
+        ]
+      },
+      "user": { "id": "u_felix", "email": "felix.finance@example.com", "ip_address": "10.0.0.7" },
+      "request": { "url": "https://tools.example.com/refunds/ref_1", "data": { "reason": "card stolen", "address": "1 Main St" }, "cookies": "next-auth.session-token=secret" },
+      "extra": { "customerSsn": "123-45-6789" },
+      "breadcrumbs": { "values": [{ "message": "loaded customer Pat Private" }] }
+    },
+    "triggered_rule": "New issue in internal-tools"
+  },
+  "actor": { "type": "application", "id": "sentry", "name": "Sentry" }
+}

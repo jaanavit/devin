@@ -21,6 +21,11 @@ export const EXCEPTIONS: readonly PolicyException[] = [
   },
   {
     rule: 2,
+    file: "apps/internal-tools/app/api/webhooks/sentry/route.ts",
+    justification: "Machine-to-machine Sentry webhook: authenticated by HMAC signature (SENTRY_WEBHOOK_SECRET), not a user session. Audits every relayed issue.",
+  },
+  {
+    rule: 2,
     file: "apps/internal-tools/app/403/page.tsx",
     justification: "Static 'access denied' page used as the middleware's 403 rewrite target; renders no data.",
   },

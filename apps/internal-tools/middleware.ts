@@ -4,7 +4,8 @@ import { getToken } from "next-auth/jwt";
 import { NextResponse, type NextRequest } from "next/server";
 import { TOOLS } from "./lib/catalog";
 
-const PUBLIC_PATHS = ["/login", "/api/auth"];
+// /api/webhooks/sentry authenticates with Sentry's HMAC signature inside the route (no user session).
+const PUBLIC_PATHS = ["/login", "/api/auth", "/api/webhooks/sentry"];
 
 /**
  * Edge gate (defense in depth): deny by default. Anonymous users are sent to /login (or get 401

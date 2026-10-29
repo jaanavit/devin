@@ -1,0 +1,86 @@
+name: Weekly dependency upgrade
+
+# Every Monday: bump exactly-pinned dependencies to the newest same-major release that is at least
+# 7 days old (scripts/deps/weekly-update.ts), run the full CI suite, and open a PR if anything changed.
+# Major upgrades are listed in the PR body but never applied automatically.
+#
+# Note: PRs opened with the default GITHUB_TOKEN do not trigger other workflows, which is why the
+# checks run here before the PR is opened. Set a DEPS_PR_TOKEN secret (fine-grained PAT with
+# contents + pull-requests write) to have CI also run on the PR itself.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: weekly-deps
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fintech_tools_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fintech_tools_test?schema=public
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/fintech_tools_test?schema=public
+      SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fintech_tools_test?schema=public
+      NEXTAUTH_SECRET: ci-only-not-a-secret
+      MOCK_IDP_ENABLED: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      DEPS_SUMMARY_FILE: ${{ runner.temp }}/deps-summary.md
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ secrets.DEPS_PR_TOKEN || github.token }}
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20.19.5"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bump dependencies
+        run: pnpm deps:update
+      - name: Stop if nothing changed
+        id: changes
+        run: |
+          if git diff --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Install upgraded versions (respects minimumReleaseAge)
+        if: steps.changes.outputs.changed == 'true'
+        run: pnpm install --no-frozen-lockfile
+      - name: CI suite
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm policy
+          pnpm test
+          pnpm build
+          pnpm db:check
+      - name: Open PR
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DEPS_PR_TOKEN || github.token }}
+        run: |
+          branch="deps/weekly-$(date -u +%Y-%m-%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "chore(deps): weekly same-major upgrades"
+          git push -u origin "$branch"
+          { echo "Automated weekly upgrade. All checks (lint, typecheck, policy, test, build, migration check) passed before this PR was opened."; echo; cat "$DEPS_SUMMARY_FILE"; } > "$RUNNER_TEMP/body.md"
+          gh pr create --base main --head "$branch" --title "chore(deps): weekly upgrades $(date -u +%Y-%m-%d)" --body-file "$RUNNER_TEMP/body.md"

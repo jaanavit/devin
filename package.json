@@ -21,6 +21,7 @@
     "bench:search": "tsx scripts/bench/transaction-search.ts",
     "jobs:worker": "tsx scripts/jobs-worker.ts",
     "jobs:run": "tsx scripts/jobs-run.ts",
+    "deps:update": "tsx scripts/deps/weekly-update.ts",
     "postinstall": "pnpm --filter @fintech/models generate"
   },
   "devDependencies": {

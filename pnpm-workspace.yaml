@@ -6,6 +6,12 @@ packages:
 # Supply-chain guard: only resolve package versions published at least 7 days ago.
 minimumReleaseAge: 10080
 
+# @sentry/nextjs's OpenTelemetry packages require @opentelemetry/api <1.10.0.
+overrides:
+  "@opentelemetry/api": "1.9.1"
+
+# @sentry/cli is intentionally NOT allowed to run its install script (it downloads a binary used
+# only for source-map upload, which this repo does not do).
 onlyBuiltDependencies:
   - "@prisma/client"
   - "@prisma/engines"
