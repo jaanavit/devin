@@ -342,3 +342,44 @@ Stubs / needed to make real:
 Known gaps / next steps:
 - Blocked actions (e.g. a denied self-approval) still aren't audited or notified.
 - No per-team Slack channels; everything goes to one webhook.
+
+## Phase 8 — Environments and guardrails
+
+**Branch:** `phase-8-ci-guardrails`, stacked on `phase-7-workflows`. Deliberate-violation branch: `ci-demo-policy-violation` (PR must stay unmerged).
+
+Built:
+- **`.github/workflows/ci.yml`** on every PR and push to `main`:
+  - **Policy checks** (`pnpm policy`)
+  - **Lint, typecheck, test, build** (tests against a Postgres 16 service container)
+  - **Prisma migration check** (`pnpm db:check`: migrations apply to an empty DB and `prisma migrate diff --exit-code` proves they match `schema.prisma`)
+  - Third-party actions pinned to commit SHAs; `permissions: contents: read`; concurrency cancels superseded runs.
+- **Deploys** in the same workflow, gated on all three check jobs: **preview** per PR, **staging** on push to `main`, **production** on a `v*` tag. Each targets a GitHub environment (`preview` / `staging` / `production`) so protection rules (e.g. a required reviewer for production) can be configured in repo settings. `scripts/deploy.sh` is a stub: with no `<ENV>_DEPLOY_HOOK_URL` secret it prints what it would deploy; with one it calls the hook.
+- **Policy checks** (`scripts/policy/check.ts`, TypeScript compiler API, documented in `docs/CONVENTIONS.md`):
+  1. **POLICY-1 audit-on-write:** a server action, route handler or page that reaches a Prisma write (`create` / `update` / `upsert` / `delete` / `…Many` / `$executeRaw`), including through helpers it calls in local modules, with no reachable `audit()` (or audited platform helper such as `approveRequest` / `runJob`).
+  2. **POLICY-2 require-role:** an action or route without `requireRole()`, or a page without `requirePageRole()`.
+  3. **POLICY-3 no-pii-logging:** `console.*` arguments referencing `ssn`, `dob`, `documentNumber` or `address`.
+  4. **POLICY-4 outbound-allowlist:** `fetch()` outside `packages/platform/src/outbound.ts`, `outboundFetch()` to a literal non-allowlisted host, or importing axios / got / node-fetch / undici etc.
+  - Each violation prints `✖ [POLICY-n name] file:line`, what's wrong and the rule text, plus a GitHub annotation on the PR diff.
+  - Exceptions live in `scripts/policy/exceptions.ts` with written justifications (currently: the Auth.js route, the login page, the static 403 page).
+- `pnpm policy` added to the `new-tool` playbook's verify step.
+
+Verification:
+- 14 checker tests (positive and negative cases for every rule, helpers in other files, `route()`-wrapped handlers, raw SQL, exceptions, host matching). 192 tests total.
+- `pnpm policy` passes on the whole codebase (110 files), so every existing tool already complies.
+- Migration check proven both ways locally: passes on the real migrations, and fails with a clear message naming the change when a column is added to `schema.prisma` without a migration.
+- **Deliberate violation** (`ci-demo-policy-violation`): adds `flags/bulk-actions.ts`, a server action that turns off every flag with `prisma.featureFlag.updateMany` and never calls `audit()`. Locally `pnpm policy` fails with:
+  ```
+  ✖ [POLICY-1 audit-on-write] apps/internal-tools/app/(tools)/flags/bulk-actions.ts:11
+      server action `disableAllFlags` writes to the database (prisma.featureFlag.updateMany at line 15) but never calls audit().
+      Rule: Every mutation is audited: call audit() from @fintech/platform/server (docs/CONVENTIONS.md rule 1).
+  ```
+
+Decisions / deviations:
+- **Policy checks are a custom static checker** rather than ESLint rules, because rule 1 needs to follow calls across files (actions → `_lib` helpers) and report per entry point.
+- The checks are static and name-based. POLICY-1 proves an audit is reachable from each entry point, not that each individual write has its own audit. POLICY-3 can't see PII inside a whole logged object. Both limits are documented in `docs/CONVENTIONS.md`; code review still applies.
+- One workflow file for checks and deploys, so deploys can depend on the check jobs directly (no duplicate CI runs).
+
+Stubs / needed to make real:
+- A hosting target: set `PREVIEW_DEPLOY_HOOK_URL` / `STAGING_DEPLOY_HOOK_URL` / `PRODUCTION_DEPLOY_HOOK_URL` as environment secrets, or replace `scripts/deploy.sh` with the provider's CLI.
+- Branch protection on `main` requiring the three check jobs, and a required reviewer on the `production` environment (repo settings).
+- **Blocked:** pushing workflow files requires the GitHub token to have the `workflow` scope. The current token doesn't, so this branch and the violation PR are committed locally but not yet pushed.
