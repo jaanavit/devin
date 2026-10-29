@@ -75,3 +75,70 @@ Built:
 
 Decisions:
 - **Phases 3, 4 and 5 are built in parallel** in separate git worktrees (`~/fit-p3`, `~/fit-p4`, `~/fit-p5`), each branched from `phase-2-playbooks` with its own databases and ports. This deviates from strictly stacked PRs: 3, 4 and 5 are siblings, and each one's PR targets `phase-2-playbooks`. Expect small merge conflicts in `schema.prisma`, `lib/catalog.ts`, `scripts/seed*` and this file when they're combined before Phase 6.
+
+## Phase 4 — Refunds dashboard
+
+**Branch:** `phase-4-refunds`, branched from `phase-2-playbooks` (PR `tool: refunds`: _pending remote_)
+
+Built (following `playbooks/new-tool.devin.md`):
+- **`/refunds`** (Analyst, Reviewer): a list of refunds showing status, amount, customer, transaction and requester. It has server-side pagination and sorting, plus a status filter. **Search by customer (ID or name prefix) or transaction ID goes through payments-mock** (`paymentsClient().searchTransactions`). The matching transaction and customer IDs then filter the refund list. If payments-mock is down, the page shows an error instead of crashing.
+- **`/refunds/new`** (Analyst only): searches payments-mock for a transaction, selects it, shows the refundable balance, and submits a refund request (amount and reason).
+- **`/refunds/[id]`** (Analyst, Reviewer): refund, transaction and approval details, and a history built from the audit log. Reviewers who didn't request the refund get Approve (optional note) and Reject (required reason) forms. The requester sees a notice instead. Failed refunds show a Retry button.
+- **Actions** (`actions.ts`): `createRefund` (Analyst), `approveRefund` / `rejectRefund` (Reviewer), `retryRefund` (Analyst or Reviewer, failed refunds only).
+- **Maker-checker** uses the platform primitive unchanged: `REFUND_POLICY = { kind: "refund", entityType: "Refund", approverRoles: ["Reviewer"], autoApproveMaxCents: 50_000 }` with `createApprovalRequest` / `approveRequest` / `rejectRequest`. ≤ $500 is `AUTO_APPROVED`. Over $500 stays `PENDING` until a Reviewer who isn't the requester approves it.
+- **Payments:** an approved refund (auto or by a Reviewer) immediately calls `POST /refunds` via `paymentsClient()`, with `refundId` = platform `Refund.id` as the idempotency key. Success → `PROCESSED`, with `externalRefundId` set and the transaction moved to `PARTIALLY_REFUNDED` / `REFUNDED`. Failure → `FAILED`, retryable.
+- **Slack alert for refunds over $2,000:** `outboundFetch(process.env.SLACK_WEBHOOK_URL, …)`. When the variable is empty it logs `console.info("slack stub: …")` with only the refund ID. The message carries only the amount, refund ID and transaction ID, never customer data. A Slack failure is logged (IDs only) and never blocks the refund.
+- **Business rules** live in `_lib/policy.ts` and are unit-tested. Amount must be positive and ≤ the refundable balance, which is the transaction amount minus pending, approved, processed and failed refunds (rejected refunds free their amount up). A reason is required (≤ 500 chars). Only `SETTLED` / `PARTIALLY_REFUNDED` transactions can be refunded. The transaction row is locked (`SELECT … FOR UPDATE`) while creating a refund, so concurrent requests can't over-refund.
+- Registered in `lib/catalog.ts` (`REFUNDS_ROLES`, `REFUND_REQUESTER_ROLES`, `REFUND_APPROVER_ROLES`). The middleware RBAC test covers it automatically.
+
+Verification:
+- 24 new tests (82 total), using a **real in-process payments-mock server** backed by the test DB so they can inspect its refund log. They cover: RBAC for every page and action (anonymous, Admin, wrong role); $499 and $500 auto-approve and appear in the payments-mock log; $501 stays pending and doesn't reach payments; self-approval and self-rejection are rejected (`sam`); Analysts can't approve; double decisions are rejected; a reject reason is required; payments failure → `FAILED` → retry → `PROCESSED` exactly once; the Slack post (and no post at exactly $2,000); the console stub without PII; a Slack failure doesn't block the refund; search goes through payments-mock; audit rows for every mutation.
+- Manual run against `pnpm dev` (:3004) + `pnpm dev:payments` (:4104), using real Auth.js sign-in and real server-action calls:
+  - Alice $499 → auto-approved, `PROCESSED`, in `services/payments-mock/logs/refunds.jsonl`.
+  - Alice $501 → `PENDING_APPROVAL`, nothing logged. Alice approving → `forbidden`. Rita approves → `PROCESSED` and logged. A second approval → `not_pending`.
+  - Sam $2,500 → `slack stub: large refund alert for refund <id>`. Sam approving his own → `self_approval`. Felix approves → logged.
+  - Page RBAC: Alice and Sam 200 everywhere. Rita 200 on the list and detail pages, 403 on `/refunds/new`. Ada 403 everywhere.
+
+Decisions / deviations:
+- **No platform code was needed** (`packages/platform` is unchanged).
+- **Test infra fix (`scripts/test/setup.ts`):** the global `next/cache` mock added in Phase 2 never applied. `next` is installed only in `apps/internal-tools`, so a bare `"next/cache"` from `scripts/test/` resolved to a different module ID. Any server action calling `revalidatePath()` failed in tests with "static generation store missing". The mock now targets the app's copy of `next`.
+- **The Slack alert fires when the refund is requested** (not when it's paid), so Finance knows a large refund is waiting for approval. Anything over $2,000 is always above the $500 auto-approve limit, so every alert is for a pending request.
+- **Payments is called synchronously** inside the approving action rather than by a background job. Failures are recorded as `FAILED` and retried from the UI; payments-mock deduplicates on `refundId`. An outbox/job could replace this once Phase 7's job runner exists.
+- **Customer name and ID are shown** (they aren't in `PII_FIELDS`). The refunds screens show no `ssn` / `dob` / `address` / `documentNumber`, so `maskForViewer` isn't needed and refund views aren't audited (the spec doesn't ask for it).
+- **Search-to-refund filtering** uses up to 100 matching transactions from payments-mock (its page-size cap). Refunds for the matched customers are all included. A notice appears when a broad name search matches more than 100 transactions.
+- **Creating a refund reads the transaction from the product DB** (needed for the row lock and the FK). Search and the transaction picker go through payments-mock.
+
+Security:
+- Audited actions: `refund.create`, `refund.approve`, `refund.reject`, `refund.process`, `refund.process_fail`, `transaction.refund_status`, plus the platform's `approval.request` / `approval.auto_approve` / `approval.approve` / `approval.reject`.
+- Outbound calls: payments-mock (`paymentsClient()`), the Slack webhook (`outboundFetch`). Both are on the allowlist.
+- Rule exceptions: none.
+
+Stubs / needed to make real:
+- `SLACK_WEBHOOK_URL` (empty → console stub). Phase 7 moves this to `notify()` (see `TODO(Phase 7)` in `_lib/process.ts`).
+
+Known gaps / next steps:
+- No partial-refund reversal or cancellation of a pending request by its requester.
+- No approval reminder for pending refunds yet (Phase 7).
+
+PR description (`tool: refunds`):
+```
+## Screens
+- /refunds — list (status, amount, customer, transaction; status filter; search by customer or transaction ID via payments-mock)
+- /refunds/new — search payments-mock for a transaction, request a refund (Analyst)
+- /refunds/[id] — detail, approval, history; approve/reject (Reviewer ≠ requester); retry failed
+## Roles
+- Analyst: list, detail, create, retry. Reviewer: list, detail, approve/reject, retry. Admin: no access
+## Security
+- Audited actions: refund.create, refund.approve, refund.reject, refund.process, refund.process_fail, transaction.refund_status (+ platform approval.*)
+- PII fields shown via maskForViewer: none shown
+- Approvals: REFUND_POLICY (Reviewer), auto-approve ≤ $500, > $500 needs a second person; approver ≠ requester enforced by the platform
+- Outbound calls: payments-mock (GET /transactions, POST /refunds) via paymentsClient(); Slack webhook via outboundFetch (refunds > $2,000; stubbed when unset)
+## Rule exceptions
+- None
+## Platform changes
+- None. (Test setup fix in scripts/test/setup.ts so the global next/cache mock actually applies.)
+## Test plan
+- [x] lint / typecheck / test / build
+- [x] RBAC + audit tests per route/action
+- [x] $499 auto-approves, $501 waits for a second Reviewer, approved refunds appear in the payments-mock log, > $2,000 alerts Slack
+```
