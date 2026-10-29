@@ -13,6 +13,8 @@ export const KYC_DECIDER_ROLES = ["Reviewer"] as const;
 export const REFUNDS_ROLES = ["Analyst", "Reviewer"] as const;
 export const REFUND_REQUESTER_ROLES = ["Analyst"] as const;
 export const REFUND_APPROVER_ROLES = ["Reviewer"] as const;
+/** Feature-flag admin: Admins only. */
+export const FLAGS_ROLES = ["Admin"] as const;
 
 export const TOOLS: readonly ToolDefinition[] = [
   {
@@ -38,6 +40,14 @@ export const TOOLS: readonly ToolDefinition[] = [
     owner: "Support & Finance",
     roles: REFUNDS_ROLES,
     description: "Request refunds against transactions; over $500 needs Finance approval; approved refunds are sent to payments.",
+  },
+  {
+    slug: "flags",
+    name: "Feature flags",
+    href: "/flags",
+    owner: "Platform team",
+    roles: FLAGS_ROLES,
+    description: "Toggle feature flags and set rollout per environment; prod changes need a reason and post to Slack.",
   },
 ];
 

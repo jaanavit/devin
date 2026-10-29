@@ -4,11 +4,23 @@ Running log of what was built per phase, deviations, security exceptions, stubs,
 
 ## Open blockers / questions
 
-- **No GitHub remote / `gh` auth.** The `gh` token on the build machine is invalid and no remote is configured, so PRs cannot be opened yet. Each phase is committed on its own stacked local branch (`phase-0-setup` → `phase-1-platform` → …). PR descriptions are recorded below so they can be opened as-is once a remote exists (`gh auth login`, `git remote add origin …`, `git push -u origin --all`).
+- None open. (Resolved: GitHub remote. The code lives in the private repo `jaanavit/devin`; `main` starts with an empty "Initial commit" so Phase 0 could be opened as a PR.)
+
+## Pull requests
+
+| Phase | Branch | PR | Base |
+| --- | --- | --- | --- |
+| 0 Repo setup | `phase-0-setup` | [#1](https://github.com/jaanavit/devin/pull/1) | `main` |
+| 1 Platform | `phase-1-platform` | [#2](https://github.com/jaanavit/devin/pull/2) | `phase-0-setup` |
+| 2 Playbooks | `phase-2-playbooks` | [#3](https://github.com/jaanavit/devin/pull/3) | `phase-1-platform` |
+| 3 KYC review queue | `phase-3-kyc` | [#5](https://github.com/jaanavit/devin/pull/5) | `phase-2-playbooks` |
+| 4 Refunds | `phase-4-refunds` | [#6](https://github.com/jaanavit/devin/pull/6) | `phase-2-playbooks` |
+| 5 Feature flags | `phase-5-flags` | [#4](https://github.com/jaanavit/devin/pull/4) | `phase-2-playbooks` |
+| 3+4+5 combined | `phase-3-4-5-integration` | (base for Phase 6) | `phase-2-playbooks` |
 
 ## Phase 0 — Repo setup
 
-**Branch:** `phase-0-setup` (PR: _pending remote_)
+**Branch:** `phase-0-setup` (PR [#1](https://github.com/jaanavit/devin/pull/1))
 
 Built:
 - pnpm workspace monorepo with the spec layout (`packages/models`, `packages/platform`, `services/payments-mock`, `apps/internal-tools`, `scripts/`, `playbooks/`, `docs/`).
@@ -27,7 +39,7 @@ Decisions / deviations:
 
 ## Phase 1 — Platform
 
-**Branch:** `phase-1-platform` (PR: _pending remote_)
+**Branch:** `phase-1-platform` (PR [#2](https://github.com/jaanavit/devin/pull/2))
 
 Built:
 - **Models** (`packages/models`): User, AuditLog, ApprovalRequest, Customer, Transaction, KycCase, KycDocument, Refund, FeatureFlag, plus enums. `@fintech/models/shared` holds pure types (`Role`, `SessionUser`, `PII_FIELDS`) that are safe for edge and client code, with a compile-time check that they stay in sync with Prisma. `@fintech/models/payments` is the payments-mock wire contract.
@@ -64,7 +76,7 @@ Stubs / needed to make real:
 
 ## Phase 2 — Playbooks
 
-**Branch:** `phase-2-playbooks` (PR: _pending remote_)
+**Branch:** `phase-2-playbooks` (PR [#3](https://github.com/jaanavit/devin/pull/3))
 
 Built:
 - `playbooks/new-tool.devin.md`: the step-by-step procedure for building a tool, using the real Phase 1 names and paths (`requirePageRole`, `requireRole`, `runAction`, `audit(..., tx)`, `maskForViewer`, `createApprovalRequest`/`approveRequest`/`rejectRequest`, `outboundFetch`, the `lib/catalog.ts` registration, and the `@fintech/platform/testing` helpers). It includes copy-paste patterns for pages, actions and route handlers, the PR template, and the `tool: <name>` title.
@@ -198,3 +210,41 @@ PR description (`tool: refunds`):
 - [x] RBAC + audit tests per route/action
 - [x] $499 auto-approves, $501 waits for a second Reviewer, approved refunds appear in the payments-mock log, > $2,000 alerts Slack
 ```
+
+## Phase 5 — Feature-flag admin
+
+**Branch:** `phase-5-flags` (PR [#4](https://github.com/jaanavit/devin/pull/4) `tool: feature-flags`, targets `phase-2-playbooks`)
+
+Built (following `playbooks/new-tool.devin.md`):
+- **`/flags`** (Admin only): `DataTable` of every flag × environment with environment tabs (All / dev / staging / prod), a `FilterBar` (environment, key prefix), server-side pagination and sort by key. Shows status, rollout %, description and last update.
+- **`/flags/[id]`**: `DetailView` of the current state, a **Turn on/off** form and a **Set rollout** form (0–100, whole numbers), and the flag's change history (last 20 audit rows, with a link into the audit viewer). Prod flags show a warning and the reason field is `required`.
+- **Server actions** (`flags/actions.ts`): `toggleFlag` and `setRollout`. Each one calls `requireRole(["Admin"])` first, re-loads the flag, validates the reason for the flag's environment, applies the change with a compare-and-set `updateMany` on the current `enabled`/`rolloutPercentage` (a concurrent edit returns `conflict`), sets `updatedById`, and writes the audit row in the same transaction.
+- **Audit:** `feature_flag.toggle` and `feature_flag.set_rollout` on `FeatureFlag:<id>`, with `before`/`after` = `{ key, environment, enabled, rolloutPercentage }` and `metadata` = `{ environment, key, reason }`.
+- **Prod rules:** a non-blank reason (≤ 500 chars) is required server-side for any prod change; outside prod it's optional and still recorded. After the transaction commits, prod changes post to Slack via `outboundFetch(process.env.SLACK_WEBHOOK_URL, …)` (`flags/_lib/slack.ts`). The message carries the flag key, environment, before → after, the actor's work email and the reason.
+- **Catalog:** `flags` registered in `lib/catalog.ts` with `FLAGS_ROLES = ["Admin"]`, so middleware returns 403 to everyone else and `middleware.test.ts` covers it for all 6 demo users.
+- **Tests:** 32 new ones. `flags.test.ts` (DB) covers RBAC on both pages and both actions (anonymous, Analyst, Reviewer, and Analyst+Reviewer `sam` all denied; nothing changed or audited), before/after audit rows, prod reason required (no change, no audit, no Slack), the Slack stub with no actor email or reason in the log line, a real webhook POST when `SLACK_WEBHOOK_URL` is set (fetch mocked), Slack failure not rolling back the change, no-op/invalid input and unknown flags. `_lib/rules.test.ts` holds the unit tests for reason, rollout and enabled parsing and for the Slack text.
+
+Verification:
+- `pnpm lint`, `pnpm typecheck`, `pnpm test` (90 tests) and `pnpm build` all pass.
+- Over HTTP on :3005 with `scripts/smoke.sh`, Ada gets 200 on `/flags`, `/flags?environment=prod` and `/flags/<prod id>`, while Alice, Rita and Sam get 403 on all three.
+
+Decisions / deviations:
+- **No schema change or migration.** The Phase 1 `FeatureFlag` model already had everything needed. The prod reason lives in the audit row's `metadata` rather than a column, because the audit log is the system of record for change history. List filters use the existing `@@index([environment])` and the `@@unique([key, environment])` index (key prefix and sort), so sorting is restricted to `key`.
+- **Two actions instead of one generic "update":** toggling and changing rollout are separate audited verbs, which keeps the audit log and Slack messages unambiguous. Submitting the current value is rejected (`conflict` / `no_change`) so no empty audit rows are written.
+- **Rollout is independent of on/off.** Turning a flag off keeps its percentage, and the effective exposure is `enabled ? rolloutPercentage : 0`. The UI says the percentage only applies while the flag is on.
+- **Slack runs after commit and is best-effort.** A Slack outage never blocks or rolls back a flag change. Failures are logged with only the flag key and the HTTP status or error class. When `SLACK_WEBHOOK_URL` is empty the change is logged as `console.info("slack stub: <action> on prod flag <key> …")`, with no actor or reason. Phase 7 will replace `_lib/slack.ts` with `notify()`.
+- **Fixed the global `next/cache` test mock** (`scripts/test/setup.ts`). `next` can't be resolved from the repo root, so `vi.mock("next/cache")` never matched the module the app imports, and any server action calling `revalidatePath()` failed under test with "static generation store missing". Phases 1–2 never exercised a server action, so nobody noticed. The setup now mocks the path that `apps/internal-tools` actually resolves to. Phases 3 and 4 will need the same fix, or will conflict with it on merge.
+
+Security rule exceptions:
+- None. Free-text reasons go to Slack by design: they're the justification reviewers need. Admins should keep customer data out of reasons. Slack messages include the acting Admin's work email (staff identity, not customer PII).
+
+Platform changes:
+- None. `packages/platform` is untouched.
+
+Stubs / needed to make real:
+- `SLACK_WEBHOOK_URL`: unset here, so prod changes are logged by the console stub. Set it to an `https://hooks.slack.com/…` incoming-webhook URL (the host is already allowlisted).
+
+Known gaps / next steps:
+- No create/delete/archive of flags and no per-segment targeting. The spec only asks for toggle and rollout.
+- No maker-checker on prod flag changes (the spec only asks for a reason). Routing prod changes through the `approval` primitive would be easy to add if the client wants it.
+- Prod changes have not been posted to a real Slack workspace yet, because no webhook URL is available. The tests confirm the POST with a mocked fetch.
