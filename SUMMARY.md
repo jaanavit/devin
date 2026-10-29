@@ -19,6 +19,10 @@ Running log of what was built per phase, deviations, security exceptions, stubs,
 | 3+4+5 combined | `phase-3-4-5-integration` | (base for Phase 6) | `phase-2-playbooks` |
 | 6 Transaction investigation | `phase-6-transactions` | [#7](https://github.com/jaanavit/devin/pull/7) | `phase-3-4-5-integration` |
 | 7 Workflows | `phase-7-workflows` | [#8](https://github.com/jaanavit/devin/pull/8) | `phase-6-transactions` |
+| 8 CI + guardrails | `phase-8-ci-guardrails` | [#9](https://github.com/jaanavit/devin/pull/9) | `phase-7-workflows` |
+| 9 Maintenance | `phase-9-maintenance` | [#10](https://github.com/jaanavit/devin/pull/10) | `phase-8-ci-guardrails` |
+| 10 Self-service | `phase-10-self-service` | [#11](https://github.com/jaanavit/devin/pull/11) | `phase-9-maintenance` |
+| Deliberate POLICY-1 violation (**do not merge**) | `ci-demo-policy-violation` | [#12](https://github.com/jaanavit/devin/pull/12) | `phase-8-ci-guardrails` |
 
 ## Phase 0 — Repo setup
 
@@ -382,7 +386,11 @@ Decisions / deviations:
 Stubs / needed to make real:
 - A hosting target: set `PREVIEW_DEPLOY_HOOK_URL` / `STAGING_DEPLOY_HOOK_URL` / `PRODUCTION_DEPLOY_HOOK_URL` as environment secrets, or replace `scripts/deploy.sh` with the provider's CLI.
 - Branch protection on `main` requiring the three check jobs, and a required reviewer on the `production` environment (repo settings).
-- **Blocked:** pushing workflow files requires the GitHub token to have the `workflow` scope. The current token doesn't, so this branch and the violation PR are committed locally but not yet pushed.
+
+CI results on GitHub (after the token was granted the `workflow` scope):
+- **PR #12 (deliberate violation): fails.** Only the "Policy checks" job fails, with `✖ [POLICY-1 audit-on-write] apps/internal-tools/app/(tools)/flags/bulk-actions.ts:11 … server action \`disableAllFlags\` writes to the database (prisma.featureFlag.updateMany at line 15) but never calls audit()`, shown as an annotation on the PR diff. Lint/typecheck/test/build and the migration check pass, and no deploy runs.
+- **PRs #9, #10, #11: all checks pass** (policy, lint/typecheck/test/build, migration check). The preview deploy stub runs.
+- Note: the first PR events after the workflow was added were dropped by GitHub (Actions hadn't started on the repo yet). A push to a throwaway `ci-smoke-test` branch started Actions, and new commits re-triggered the PRs.
 
 ## Phase 9 — Automated maintenance
 
@@ -421,7 +429,7 @@ Decisions / deviations:
 
 Stubs / needed to make real:
 - `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_WEBHOOK_SECRET` (Sentry internal integration), `DEVIN_API_KEY` + `DEVIN_ORG_ID` (Devin service user with `UseDevinSessions`), and optionally a `DEPS_PR_TOKEN` secret so CI also runs on the weekly PR.
-- Same push blocker as Phase 8 (`workflow` scope needed for `.github/workflows/*`).
+- `actionlint` (run while debugging CI) caught an invalid `runner.temp` expression in `weekly-deps.yml`; fixed. All workflows now pass `actionlint`.
 
 ## Phase 10 — Self-service request flow
 
@@ -449,8 +457,8 @@ Verification: 3 new tests (208 total); lint, typecheck, policy, test and build p
 
 | Area | State |
 | --- | --- |
-| Phases 0–7 | Merged into stacked branches, PRs #1–#8 open on `jaanavit/devin` |
-| Phases 8–10 | Committed locally (`phase-8-ci-guardrails` → `phase-9-maintenance` → `phase-10-self-service`, plus `ci-demo-policy-violation`). **Not pushed**: GitHub rejects workflow files from a token without the `workflow` scope. |
+| Phases 0–10 | Stacked branches with PRs #1–#11 open on `jaanavit/devin`; PRs #9–#11 green in GitHub Actions |
+| Deliberate violation | PR #12, fails CI on POLICY-1 as required; leave unmerged |
 | Tests | 208 passing (unit + DB integration against Postgres) |
 | Never-cut items | Audit log, RBAC, PII masking, maker-checker, all three client apps, CI policy checks, maintenance relay: all built |
 
@@ -473,7 +481,7 @@ Verification: 3 new tests (208 total); lint, typecheck, policy, test and build p
 - Public routes: Auth.js (`/api/auth/*`), `/login`, the static `/403` page, and the signature-authenticated Sentry webhook. All are listed with justifications in `scripts/policy/exceptions.ts`.
 
 ### Known gaps / suggested next steps
-1. Grant the `workflow` scope and push Phases 8–10; open the violation PR and confirm CI fails on POLICY-1; enable branch protection.
+1. Enable branch protection on `main` requiring the three CI jobs, and a required reviewer on the `production` environment.
 2. Pick a host and wire up `scripts/deploy.sh` (app, payments-mock, `pnpm jobs:worker`, `pnpm db:deploy` per environment).
 3. Audit denied attempts (e.g. blocked self-approvals) for surveillance.
 4. Encrypt or tokenize PII columns at rest; currently plaintext in the prototype DB.
