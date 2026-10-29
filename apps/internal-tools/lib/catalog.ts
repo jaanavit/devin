@@ -5,6 +5,7 @@ import type { ToolDefinition } from "@fintech/platform";
  * under `href`; pages and actions must still call `requirePageRole()` / `requireRole()`.
  */
 export const AUDIT_ROLES = ["Admin"] as const;
+export const FLAGS_ROLES = ["Admin"] as const;
 
 export const TOOLS: readonly ToolDefinition[] = [
   {
@@ -14,6 +15,14 @@ export const TOOLS: readonly ToolDefinition[] = [
     owner: "Platform team",
     roles: AUDIT_ROLES,
     description: "Search the append-only audit log by actor, entity, action and date; export to CSV.",
+  },
+  {
+    slug: "flags",
+    name: "Feature flags",
+    href: "/flags",
+    owner: "Platform team",
+    roles: FLAGS_ROLES,
+    description: "Toggle feature flags and set rollout per environment; prod changes need a reason and post to Slack.",
   },
 ];
 
