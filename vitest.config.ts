@@ -17,6 +17,7 @@ export default defineConfig({
     exclude: ["**/node_modules/**", "**/.next/**", "**/dist/**"],
     environment: "node",
     globalSetup: ["./scripts/test/global-setup.ts"],
+    setupFiles: ["./scripts/test/setup.ts"],
     // DB integration tests share one database; run files sequentially to keep resets isolated.
     fileParallelism: false,
     env: {
