@@ -248,3 +248,52 @@ Known gaps / next steps:
 - No create/delete/archive of flags and no per-segment targeting. The spec only asks for toggle and rollout.
 - No maker-checker on prod flag changes (the spec only asks for a reason). Routing prod changes through the `approval` primitive would be easy to add if the client wants it.
 - Prod changes have not been posted to a real Slack workspace yet, because no webhook URL is available. The tests confirm the POST with a mocked fetch.
+
+## Phase 6 — Transaction investigation
+
+**Branch:** `phase-6-transactions`, stacked on `phase-3-4-5-integration` (PR: see table above once opened)
+
+Built (following `playbooks/new-tool.devin.md`):
+- **Catalog entry** `transactions` → `/transactions`, owner Risk, roles `TRANSACTIONS_ROLES = [Analyst, Reviewer]`. Admins get 403.
+- **`/transactions` search** over all 500K transactions by customer (exact `cus_…` ID, or case-insensitive name prefix resolved to at most 500 customers with a warning when capped), transaction ID, merchant (select), amount range ($) and date range. Server-side pagination; sort by date or amount (with `id` as a tiebreaker for stable paging). Invalid filters show a message instead of failing.
+- **Customer view** `/transactions/customers/[id]`:
+  - profile with SSN, DOB and address through `maskForViewer`; the view is audited as `customer.view` for every role, plus `pii.view` for Reviewers;
+  - **timeline** merging transactions (200 most recent; all refunds and KYC events are always included), refunds (requested and paid out) and KYC events (opened, claimed, recommended, decided), newest first with deterministic tie-breaking (`_lib/customer.ts`, unit-tested);
+  - **linked accounts**: other customers sharing a device ID, card fingerprint or address hash, one row per customer with badges for each shared identifier, strongest links first.
+- **CSV export** `/transactions/export` for the current filters, capped at 50,000 rows, audited as `transaction.export` with the filters, row count and truncation flags. It contains no PII fields, so it's the same for every role.
+- **Indexes** (migration `transaction_search_indexes`): `Transaction(createdAt)`, `(merchant, createdAt)`, `(amountCents)`, `(deviceId)`, `(cardFingerprint)`.
+- `pnpm bench:search` (`scripts/bench/transaction-search.ts`) times the exact queries the page runs (paged rows + total count), 7 runs per case after a warm-up.
+
+Search timings on the full seed (500,000 transactions, Homebrew Postgres 16 on the build laptop), median / max of 7 runs:
+
+| Search | Matches | Before indexes (ms) | After indexes (ms) |
+| --- | ---: | ---: | ---: |
+| No filters (newest first) | 500,000 | 69.4 / 71.7 | 23.5 / 28.0 |
+| Transaction ID | 1 | 2.2 / 3.1 | 1.7 / 6.9 |
+| Customer ID | 24 | 1.2 / 2.2 | 1.3 / 2.6 |
+| Customer name prefix ("Olivia") | 9,915 | 32.8 / 40.6 | 18.1 / 20.4 |
+| Merchant | 25,035 | 55.2 / 61.9 | 5.0 / 7.2 |
+| Amount $1,000–$1,500 | 25,269 | 33.2 / 34.6 | 4.6 / 6.7 |
+| Last 7 days | 9,659 | 38.4 / 41.6 | 3.8 / 6.1 |
+| Merchant + amount + 30 days | 460 | 38.2 / 40.6 | 9.0 / 9.3 |
+| Amount ≥ $2,000, sorted by amount | 25,289 | 44.9 / 46.9 | 5.6 / 6.6 |
+| Merchant, page 200 | 24,960 | 39.0 / 41.6 | 9.3 / 12.1 |
+
+Slowest single search: **28 ms** after indexes (target < 1,000 ms). Full page loads over HTTP with real sign-in: 35–190 ms (the 190 ms was the first, cold request).
+
+Verification:
+- 18 new tests (159 total): filter parsing and validation; search correctness for each filter, name-prefix case-insensitivity, amount sort and paging; timeline ordering and tie-breaks; linked-account grouping and lookup; **the seeded fraud ring (`generateFraudRing`) shows up as linked accounts**, and every ring member links to at least one other; page RBAC (anonymous → /login, Admin 403, 404 for unknown customers); Analyst sees masked PII with only `customer.view` audited; Reviewer sees full PII with `customer.view` + `pii.view`, and no PII in audit rows; export RBAC (401/403), filtered CSV without PII, export audited, invalid filters → 400 with no audit row.
+- Mutation check: reversing the timeline sort or bypassing `maskForViewer` makes 4 tests fail.
+- Manual check on the full seed as Aaron (Risk analyst): `cus_900001` lists `cus_900002`–`cus_900007` as linked accounts. `cus_900008` is in the ring via a shared card with other members but shares nothing directly with `cus_900001`.
+
+Decisions / deviations:
+- **Reviewers can use the tool too** (the spec says "Risk analysts"). This is what makes "PII masked by role" meaningful: Analysts see masked values, Reviewers see full values and the reveal is audited.
+- **Searches themselves are not audited**; customer views and exports are. Auditing every search would flood the log with low-value rows.
+- **Customer name search** uses a two-step lookup (resolve up to 500 matching customers, then filter transactions by `customerId`), which uses the existing `(customerId, createdAt)` index. A trigram index would allow substring search; not needed for the spec.
+- The page's merchant dropdown comes from `groupBy(merchant)`, which uses the new merchant index.
+
+Platform changes: none. Security rule exceptions: none.
+
+Known gaps / next steps:
+- Linked accounts are one hop. A graph view (multi-hop, e.g. to reach `cus_900008` from `cus_900001`) would help ring investigations.
+- Deep OFFSET pagination gets slower on very large result sets; keyset pagination would fix it if needed.

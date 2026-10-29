@@ -15,6 +15,8 @@ export const REFUND_REQUESTER_ROLES = ["Analyst"] as const;
 export const REFUND_APPROVER_ROLES = ["Reviewer"] as const;
 /** Feature-flag admin: Admins only. */
 export const FLAGS_ROLES = ["Admin"] as const;
+/** Transaction investigation for Risk: Analysts (masked PII) and Reviewers (full PII, audited). */
+export const TRANSACTIONS_ROLES = ["Analyst", "Reviewer"] as const;
 
 export const TOOLS: readonly ToolDefinition[] = [
   {
@@ -48,6 +50,14 @@ export const TOOLS: readonly ToolDefinition[] = [
     owner: "Platform team",
     roles: FLAGS_ROLES,
     description: "Toggle feature flags and set rollout per environment; prod changes need a reason and post to Slack.",
+  },
+  {
+    slug: "transactions",
+    name: "Transaction investigation",
+    href: "/transactions",
+    owner: "Risk",
+    roles: TRANSACTIONS_ROLES,
+    description: "Search all transactions, view a customer's merged timeline and linked accounts (shared device, card or address); audited CSV export.",
   },
 ];
 
