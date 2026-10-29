@@ -155,10 +155,10 @@ Required: at least one RBAC test and one audit test per route and action, approv
 ## 7. Verify and open the PR
 
 ```sh
-pnpm lint && pnpm typecheck && pnpm test && pnpm build
+pnpm lint && pnpm typecheck && pnpm policy && pnpm test && pnpm build
 ```
 
-Repeat until all four are green, then smoke-test manually: run `pnpm dev`, sign in as each relevant demo user, and check `scripts/smoke.sh <sub> /my-tool` for status codes.
+Repeat until all five are green. `pnpm policy` runs the same audit / RBAC / PII-logging / outbound checks that CI enforces (see `docs/CONVENTIONS.md`). Then then smoke-test manually: run `pnpm dev`, sign in as each relevant demo user, and check `scripts/smoke.sh <sub> /my-tool` for status codes.
 
 Update `SUMMARY.md` (what was built, deviations, rule exceptions, stubs, gaps). Commit, then open a PR titled **`tool: <name>`** with this description:
 
