@@ -180,6 +180,8 @@ model KycCase {
   @@index([status, openedAt])
   @@index([assigneeId])
   @@index([customerId])
+  @@index([riskLevel])
+  @@index([slaDueAt])
 }
 
 model KycDocument {
