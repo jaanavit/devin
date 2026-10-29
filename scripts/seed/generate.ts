@@ -151,14 +151,20 @@ export function generateTransaction(rng: Rng, index: number, customer: SeedCusto
 /** The KYC case whose ID document shows a different DOB from the customer record. */
 export const DOB_MISMATCH_CASE_ID = "kyc_0042";
 
+/** Approval kind for KYC final decisions; must match `KYC_DECISION_POLICY.kind` in the KYC tool. */
+export const KYC_DECISION_KIND = "kyc_decision";
+
 export interface KycSeed {
   cases: Prisma.KycCaseCreateManyInput[];
   documents: Prisma.KycDocumentCreateManyInput[];
+  /** Maker-checker requests for every recommended (pending) or decided case. */
+  approvals: Prisma.ApprovalRequestCreateManyInput[];
 }
 
 export function generateKyc(rng: Rng, customers: readonly SeedCustomer[], count: number, now: number, users: { analysts: string[]; reviewer: string }): KycSeed {
   const cases: Prisma.KycCaseCreateManyInput[] = [];
   const documents: Prisma.KycDocumentCreateManyInput[] = [];
+  const approvals: Prisma.ApprovalRequestCreateManyInput[] = [];
   const used = new Set<number>();
   for (let i = 1; i <= count; i++) {
     let idx = int(rng, 0, customers.length - 1);
@@ -184,6 +190,21 @@ export function generateKyc(rng: Rng, customers: readonly SeedCustomer[], count:
       Object.assign(base, { status: outcome === "APPROVE" ? "APPROVED" : "REJECTED", assigneeId: analyst, claimedAt: openedAt, recommendation: outcome, recommendationNotes: "Checked against watchlists.", recommendedById: analyst, recommendedAt: openedAt, decision: outcome, decisionReason: outcome === "APPROVE" ? "Identity verified." : "Document could not be verified.", decidedById: users.reviewer, decidedAt: new Date(openedAt.getTime() + 5 * 3_600_000) });
     }
     cases.push(base);
+    if (base.recommendedById) {
+      approvals.push({
+        id: `apr_${id}`,
+        kind: KYC_DECISION_KIND,
+        entityType: "KycCase",
+        entityId: id,
+        approverRoles: ["Reviewer"],
+        requesterId: base.recommendedById,
+        status: base.decision ? (base.decision === "APPROVE" ? "APPROVED" : "REJECTED") : "PENDING",
+        decidedById: base.decidedById ?? null,
+        decidedAt: base.decidedAt ?? null,
+        decisionReason: base.decisionReason ?? null,
+        createdAt: base.recommendedAt ?? openedAt,
+      });
+    }
 
     const customerDob = customer.dob as Date;
     const printedDob = mismatch ? new Date(Date.UTC(customerDob.getUTCFullYear() - 2, customerDob.getUTCMonth(), customerDob.getUTCDate())) : customerDob;
@@ -197,7 +218,7 @@ export function generateKyc(rng: Rng, customers: readonly SeedCustomer[], count:
     });
     documents.push({ id: `${id}_doc2`, caseId: id, kind: "proof_of_address", fileName: `utility_bill_${customer.id}.pdf`, uploadedAt: openedAt });
   }
-  return { cases, documents };
+  return { cases, documents, approvals };
 }
 
 // ---------------------------------------------------------------------------
