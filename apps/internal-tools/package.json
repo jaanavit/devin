@@ -4,15 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --port 3000",
+    "dev": "next dev --port ${PORT:-3000}",
     "build": "next build",
-    "start": "next start --port 3000",
+    "start": "next start --port ${PORT:-3000}",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@fintech/models": "workspace:*",
     "@fintech/platform": "workspace:*",
     "next": "15.5.28",
+    "next-auth": "4.24.15",
     "react": "19.1.10",
     "react-dom": "19.1.10"
   },
