@@ -12,14 +12,22 @@ export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
 git -C "$REPO" worktree add "$DIR" -b "$BRANCH" "$BASE"
 for db in "$DEV_DB" "$TEST_DB"; do createdb -U postgres "$db"; done
 
+# Drop any per-instance lines from the source .env, then append this worktree's values, so the
+# result is correct whether or not the root .env predates PORT / PAYMENTS_MOCK_PORT.
 sed -E \
   -e "s#/fintech_tools_test\?#/${TEST_DB}?#" \
   -e "s#/fintech_tools\?#/${DEV_DB}?#" \
-  -e "s#^NEXTAUTH_URL=.*#NEXTAUTH_URL=\"http://localhost:300${N}\"#" \
-  -e "s#^PAYMENTS_MOCK_PORT=.*#PAYMENTS_MOCK_PORT=\"410${N}\"#" \
-  -e "s#^PAYMENTS_MOCK_URL=.*#PAYMENTS_MOCK_URL=\"http://localhost:410${N}\"#" \
+  -e "/^(PORT|NEXTAUTH_URL|PAYMENTS_MOCK_PORT|PAYMENTS_MOCK_URL)=/d" \
   "$REPO/.env" > "$DIR/.env"
-printf 'PORT="300%s"\n' "$N" >> "$DIR/.env"
+cat >> "$DIR/.env" <<ENV
+
+# Worktree-specific (scripts/worktree-setup.sh)
+PORT="300${N}"
+NEXTAUTH_URL="http://localhost:300${N}"
+PAYMENTS_MOCK_PORT="410${N}"
+PAYMENTS_MOCK_URL="http://localhost:410${N}"
+ENV
+grep -q "/${DEV_DB}?" "$DIR/.env" && grep -q "/${TEST_DB}?" "$DIR/.env" || { echo "DATABASE_URL rewrite failed" >&2; exit 1; }
 
 cd "$DIR"
 pnpm install --frozen-lockfile >/dev/null
