@@ -9,6 +9,8 @@
     "dev": "pnpm --filter @fintech/internal-tools dev",
     "dev:payments": "pnpm --filter @fintech/payments-mock dev",
     "lint": "eslint . --max-warnings=0",
+    "policy": "tsx scripts/policy/run.ts",
+    "db:check": "bash scripts/ci/migration-check.sh",
     "typecheck": "pnpm -r --parallel typecheck && tsc -p tsconfig.json",
     "test": "vitest run",
     "build": "pnpm -r build",
