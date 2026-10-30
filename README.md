@@ -39,7 +39,7 @@ pnpm dev                      # http://localhost:3000
 pnpm dev:payments             # payments-mock on http://localhost:4100 (separate terminal)
 ```
 
-To use a different app port, run `PORT=3003 pnpm dev` and set `NEXTAUTH_URL` to match. The payments-mock port comes from `PAYMENTS_MOCK_PORT` in `.env`.
+To use a different app port, set `PORT` (and a matching `NEXTAUTH_URL`) in `.env`. The payments-mock port comes from `PAYMENTS_MOCK_PORT` in `.env`.
 
 ## Logging in as each demo role
 
