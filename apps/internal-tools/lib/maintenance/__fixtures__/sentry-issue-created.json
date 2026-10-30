@@ -1,0 +1,19 @@
+{
+  "action": "created",
+  "installation": { "uuid": "7a485448-a9e2-4c85-8a3c-4f44175783c9" },
+  "data": {
+    "issue": {
+      "id": "4504999999",
+      "shortId": "INTERNAL-TOOLS-1F",
+      "title": "PrismaClientKnownRequestError: Unique constraint failed on the fields: (`key`,`environment`)",
+      "culprit": "app/(tools)/flags/actions in applyChange",
+      "level": "error",
+      "status": "unresolved",
+      "metadata": { "type": "PrismaClientKnownRequestError", "value": "Unique constraint failed on the fields: (`key`,`environment`)", "filename": "app/(tools)/flags/actions.ts", "function": "applyChange" },
+      "project": { "id": "2", "name": "internal-tools", "slug": "internal-tools" },
+      "web_url": "https://fintech.sentry.io/issues/4504999999/",
+      "firstSeen": "2026-10-29T08:00:00.000Z"
+    }
+  },
+  "actor": { "type": "application", "id": "sentry", "name": "Sentry" }
+}

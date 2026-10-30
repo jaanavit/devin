@@ -383,3 +383,42 @@ Stubs / needed to make real:
 - A hosting target: set `PREVIEW_DEPLOY_HOOK_URL` / `STAGING_DEPLOY_HOOK_URL` / `PRODUCTION_DEPLOY_HOOK_URL` as environment secrets, or replace `scripts/deploy.sh` with the provider's CLI.
 - Branch protection on `main` requiring the three check jobs, and a required reviewer on the `production` environment (repo settings).
 - **Blocked:** pushing workflow files requires the GitHub token to have the `workflow` scope. The current token doesn't, so this branch and the violation PR are committed locally but not yet pushed.
+
+## Phase 9 — Automated maintenance
+
+**Branch:** `phase-9-maintenance`, stacked on `phase-8-ci-guardrails`. Setup and testing guide: `docs/maintenance.md`.
+
+Built:
+- **Sentry** in `apps/internal-tools` (`@sentry/nextjs` 10.76): server, route-handler and server-action errors via `instrumentation.ts` / `onRequestError`; browser errors via `instrumentation-client.ts`. Disabled when `SENTRY_DSN` / `NEXT_PUBLIC_SENTRY_DSN` are empty. `beforeSend` (`lib/sentry.ts`):
+  - keeps only the user ID; drops request body, cookies, headers and query string;
+  - redacts PII-named keys and SSN/email patterns everywhere, including stack-frame local variables;
+  - removes breadcrumb text.
+- **Sentry → Devin relay** `POST /api/webhooks/sentry`:
+  - verifies Sentry's HMAC-SHA256 signature (constant-time);
+  - parses `issue.created` and `event_alert.triggered`, the latter carrying the full stack trace;
+  - forwards only the error, culprit, up to 15 frames (crashing frame first) and the issue link;
+  - creates a session through the **Devin API v3** (`POST /v3/organizations/{org_id}/sessions`, checked against the current docs; v1 is the legacy API), with instructions to reproduce, fix, add a regression test, run the full check suite and open a PR;
+  - is idempotent per Sentry issue (the audit log is the ledger), audits every relay as `system:sentry-relay`, and is stubbed when `DEVIN_API_KEY` / `DEVIN_ORG_ID` are unset.
+  - The Devin client lives in the platform (`createDevinSession`) and goes through `outboundFetch`.
+- **Weekly dependency upgrade** (`.github/workflows/weekly-deps.yml`, Mondays 06:00 UTC + manual run):
+  - `scripts/deps/weekly-update.ts` bumps exact pins to the newest same-major, non-prerelease version published ≥ 7 days ago;
+  - then the full suite runs (lint, typecheck, policy, test, build, migration check), and a PR opens only if everything passes;
+  - available major upgrades are listed in the PR body, never applied automatically.
+  - `.github/dependabot.yml` keeps the SHA-pinned Actions current (7-day cooldown).
+- `scripts/maintenance/send-sample-sentry-webhook.sh` sends a correctly signed sample payload to a running app.
+
+Verification:
+- 13 new tests (205 total). 11 relay/Sentry tests against realistic sample payloads (`lib/maintenance/__fixtures__/`): signature accept/reject cases; both payload types parsed; prompt contents with **no PII** even though the sample payload deliberately contains an SSN, emails, an IP, a cookie, a request body and a customer name; exact v3 request (URL, auth, repos, tags); duplicate webhook → one session; stub mode; Devin API failure → 502 with no audit row; the `beforeSend` scrubber. Plus 2 tests for the dependency picker.
+- Against the running production build: signed sample → `201 {"status":"stubbed"}` and an audit row; wrong secret → 401; other `/api/*` paths still need a session (401).
+- `pnpm deps:update` dry run against the live registry: 7 same-major updates (React 19.3.1, ESLint 10.13.0, dotenv 16.6.1), and 11 majors listed but not applied (Next 16, Prisma 7, TypeScript 7, Vitest 5, Sentry 11, …).
+
+Decisions / deviations:
+- **The webhook route is a documented POLICY-2 exception.** A webhook has no user session; it's authenticated by signature instead, and is the only public API besides Auth.js.
+- **Breadcrumbs are stripped of text** rather than pattern-scrubbed: writing the tests showed that a customer name in a log breadcrumb would otherwise reach Sentry, and names can't be matched by pattern.
+- **A custom weekly workflow, not Dependabot, for npm**, so upgrades obey the same 7-day rule as the lockfile, never jump majors, and only open a PR after the whole suite (including policy and migration checks) has passed. Dependabot is used for GitHub Actions.
+- Sentry source maps aren't uploaded (needs a Sentry auth token and `withSentryConfig`). `@sentry/cli`'s install script is intentionally not allowed to run.
+- `@opentelemetry/api` is pinned to 1.9.1 via a pnpm override to satisfy `@sentry/nextjs`'s OpenTelemetry peer range.
+
+Stubs / needed to make real:
+- `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_WEBHOOK_SECRET` (Sentry internal integration), `DEVIN_API_KEY` + `DEVIN_ORG_ID` (Devin service user with `UseDevinSessions`), and optionally a `DEPS_PR_TOKEN` secret so CI also runs on the weekly PR.
+- Same push blocker as Phase 8 (`workflow` scope needed for `.github/workflows/*`).

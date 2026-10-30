@@ -12,6 +12,7 @@
   "dependencies": {
     "@fintech/models": "workspace:*",
     "@fintech/platform": "workspace:*",
+    "@sentry/nextjs": "10.76.2",
     "next": "15.5.28",
     "next-auth": "4.24.15",
     "react": "19.1.10",

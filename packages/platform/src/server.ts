@@ -18,6 +18,7 @@ export { errorResponse, route, runAction, type ActionResult } from "./http";
 export { inTransaction, type DbClient } from "./db";
 export { createPaymentsClient, paymentsClient, PaymentsServiceError, type PaymentsClient } from "./services/payments";
 export { notify, type Notification, type NotifyOutcome } from "./notify";
+export { createDevinSession, DevinApiError, type DevinSessionRequest, type DevinSessionResult } from "./services/devin";
 export {
   JobAlreadyRunningError,
   SYSTEM_SCHEDULER,
