@@ -75,3 +75,59 @@ Built:
 
 Decisions:
 - **Phases 3, 4 and 5 are built in parallel** in separate git worktrees (`~/fit-p3`, `~/fit-p4`, `~/fit-p5`), each branched from `phase-2-playbooks` with its own databases and ports. This deviates from strictly stacked PRs: 3, 4 and 5 are siblings, and each one's PR targets `phase-2-playbooks`. Expect small merge conflicts in `schema.prisma`, `lib/catalog.ts`, `scripts/seed*` and this file when they're combined before Phase 6.
+
+## Phase 3 — KYC review queue
+
+**Branch:** `phase-3-kyc` (from `phase-2-playbooks`; PR `tool: kyc-review-queue`: _pending remote_)
+
+Built (following `playbooks/new-tool.devin.md`):
+- **Catalog entry** `kyc` → `/kyc`, owner Compliance, roles `KYC_ROLES = [Analyst, Reviewer]` (`lib/catalog.ts`). `KYC_PREPARER_ROLES = [Analyst]` and `KYC_DECIDER_ROLES = [Reviewer]` gate the actions. Admins get 403 from both the middleware and `requirePageRole`.
+- **`/kyc` list:** `DataTable` + `FilterBar` with filters for status, risk level and assignee (me / unassigned / a specific Analyst), plus server-side pagination and sorting. It shows SLA age and an SLA due/overdue badge, and defaults to sorting by SLA due date, soonest first. No PII is loaded on the list.
+- **`/kyc/[id]` detail:** customer info (SSN, DOB, address and document number go through `maskForViewer`), case info, documents list, the Analyst recommendation, the Reviewer decision, and history (the case's mutation audit rows). The page also has the Queue claim/unclaim control, the recommendation form (only for the assignee) and the final-decision form (only for a Reviewer who did not prepare the case). The preparer sees "You prepared this case, so another Reviewer must make the final decision" instead of the form. The document `fixture` JSON, which holds the printed DOB and document number, is never selected.
+- **Server actions** (`actions.ts`): `claimCase`, `unclaimCase`, `recommendCase` (outcome + required notes), `decideCase` (outcome + required reason). Each one calls `requireRole` first inside `runAction`, re-loads the case, checks the pure `_lib/rules.ts` blockers, applies a conditional `updateMany` keyed on the expected status and assignee (otherwise a `ConflictError`), and calls `audit(..., tx)` in the same transaction.
+- **Maker-checker:** `recommendCase` opens an approval request with `createApprovalRequest` under `KYC_DECISION_POLICY` (`kind: kyc_decision`, approver role Reviewer, no amount so it never auto-approves). `decideCase` first checks in domain logic that the decider didn't prepare the case (`decideBlocker` → `ApprovalError("SELF_APPROVAL")`, 403 `self_approval`). It then calls `approveRequest` or `rejectRequest` in the same transaction, so the platform also enforces approver ≠ requester.
+- **Audit:** `kyc_case.view` on every detail render (every role). `pii.view` (field names only) when a Reviewer gets unmasked values. `kyc_case.claim`, `kyc_case.unclaim`, `kyc_case.recommend` and `kyc_case.decide` include before/after (`documentNumber` is redacted by `audit()`) and metadata (outcome, approval request id). `approval.request`, `approval.approve` and `approval.reject` come from the platform.
+- **Data:** one migration (`kyc_queue_indexes`) adds indexes on `KycCase.riskLevel` and `KycCase.slaDueAt`, which the list filters and sorts on. The other filters already had indexes. The seed now creates a `kyc_decision` approval request for every recommended case (PENDING) and every decided case (APPROVED/REJECTED), so seeded cases can be decided through the same path. The worktree DB was re-seeded with 50K transactions.
+
+Verification:
+- `pnpm lint`, `typecheck`, `test` (85 tests, 26 of them new in `kyc.test.ts`, plus one new seed test) and `build` all pass.
+- Tests cover RBAC for both pages (anonymous → /login; Admin → 403; Analyst and Reviewer render) and every action (wrong role → `forbidden`). They check the audit rows written by every action and by the view. Analysts get masked SSN/DOB/address/document number in the rendered HTML with no `pii.view` row. Reviewers get full values plus a `pii.view` row, and no PII values appear in the audit rows. Self-decision is blocked in the server action (`self_approval`, with the case and approval request unchanged and no `kyc_case.decide` row) and in the UI (the rendered page for the preparer has no decision form but another Reviewer's does). Tests also cover required reason/notes, stale/invalid state, the reject path, the full claim → recommend → decide flow, and `_lib` unit tests for the blockers, filters and SLA.
+- Manual end-to-end against `pnpm dev` (:3003) with real Auth.js sign-in, submitting the server-action forms over HTTP. Alice claims and recommends `kyc_0002`, then Rita approves it: the case and its approval request end APPROVED and the audit trail is complete. Alice sees `•••-••-NNNN` and Rita sees full values with `pii.view` audited. Sam claims and recommends `kyc_0003` and gets no decision form. When Sam replays Rita's decision form, the server rejects it and the case stays RECOMMENDED. Ada gets 403 on `/kyc` and `/kyc/[id]`. `scripts/smoke.sh` shows 200 for alice, rita and sam and 403 for ada.
+
+Decisions / deviations:
+- **Who does what:** only Analysts claim and recommend, and only Reviewers decide. Sam (Analyst + Reviewer) can do both, but never on the same case. The "preparer" is whoever claimed or recommended the case. Unclaiming is only allowed by the assignee while the case is IN_REVIEW.
+- **Mapping the decision to the approval primitive:** a final APPROVE calls `approveRequest`, and a final REJECT calls `rejectRequest`. The reviewer's reason is stored on both the case and the approval request, and the reviewer can decide against the analyst's recommendation.
+- **Every detail render is a view.** That includes the re-render after a form submission, so one visit can produce several `kyc_case.view` rows. History on the page hides view rows and shows only mutations.
+- **Test harness fix (`scripts/test/setup.ts`, not platform):** the global `vi.mock("next/cache")` from Phase 2 never applied. `next` isn't installed at the repo root, so the bare id didn't resolve, and the first server action under test failed with "static generation store missing". The setup file now resolves `next/cache` from `apps/internal-tools` and mocks that exact file with `vi.doMock`.
+- `kyc.test.ts` imports `KYC_DECISION_KIND` from `scripts/seed/generate.ts` to make sure the seed and the tool's policy use the same approval kind.
+
+Platform changes: **none** (`packages/platform` is untouched). Schema change in `packages/models`: two indexes only.
+
+Security rule exceptions: none.
+
+Known gaps / next steps:
+- Denied self-decision attempts return 403 but aren't audited themselves. A `kyc_case.decide_denied` row would help with surveillance.
+- Documents are a metadata list only (no file storage or viewer). Phase 3b (Assist panel / LLM extraction) was skipped as instructed.
+- No "send back to analyst" path from RECOMMENDED. A reviewer who disagrees records the opposite decision with a reason.
+- Expect merge conflicts with Phases 4 and 5 in `lib/catalog.ts`, `schema.prisma` and its migrations, `scripts/seed*`, `scripts/test/setup.ts` (if they also hit the mock issue) and this file.
+
+PR description:
+```
+## Screens
+- /kyc — queue list (filters: status, risk, assignee; SLA age + overdue badge; server-side pagination/sort)
+- /kyc/[id] — case detail (customer PII via maskForViewer, documents, recommendation, decision, history; claim/unclaim, recommend, decide forms)
+## Roles
+- Analyst: view (masked PII), claim/unclaim, recommend. Reviewer: view (full PII, audited), final decision (never on a case they prepared). Admin: no access
+## Security
+- Audited actions: kyc_case.view, pii.view, kyc_case.claim, kyc_case.unclaim, kyc_case.recommend, kyc_case.decide, approval.request/approve/reject
+- PII fields shown via maskForViewer: ssn, dob, address, documentNumber
+- Approvals: KYC_DECISION_POLICY (kind kyc_decision, approver Reviewer, no auto-approve); preparer ≠ decider enforced in domain logic and by the platform
+- Outbound calls: none
+## Rule exceptions
+- None
+## Platform changes
+- None (test setup fix in scripts/test/setup.ts so the global next/cache mock applies)
+## Test plan
+- [x] lint / typecheck / test / build
+- [x] RBAC + audit tests per route/action; self-decision blocked in UI and server action
+```

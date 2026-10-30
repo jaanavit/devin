@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DOB_MISMATCH_CASE_ID,
   FRAUD_RING,
+  KYC_DECISION_KIND,
   REFUND_AUTO_APPROVE_MAX_CENTS,
   generateCustomers,
   generateFlags,
@@ -50,6 +51,20 @@ describe("seed generators", () => {
       return (customer?.dob as Date).toISOString().slice(0, 10) !== fixture.dob;
     });
     expect(mismatched.map((d) => d.caseId)).toEqual([DOB_MISMATCH_CASE_ID]);
+  });
+
+  it("creates a maker-checker request for every recommended or decided KYC case", () => {
+    const customers = generateCustomers(mulberry32(4), 500);
+    const { cases, approvals } = generateKyc(mulberry32(5), customers, 200, now, { analysts: ["u_alice", "u_sam"], reviewer: "u_rita" });
+    const prepared = cases.filter((c) => c.recommendedById);
+    expect(approvals.map((a) => a.entityId)).toEqual(prepared.map((c) => c.id));
+    for (const a of approvals) {
+      const kase = prepared.find((c) => c.id === a.entityId)!;
+      expect(a).toMatchObject({ kind: KYC_DECISION_KIND, entityType: "KycCase", requesterId: kase.recommendedById });
+      expect(a.status).toBe(kase.status === "RECOMMENDED" ? "PENDING" : kase.status);
+      expect(a.decidedById).not.toBe(a.requesterId);
+    }
+    expect(approvals.some((a) => a.status === "PENDING")).toBe(true);
   });
 
   it("creates refunds whose approval state respects the $500 threshold", () => {
