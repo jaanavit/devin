@@ -41,6 +41,15 @@ pnpm dev:payments             # payments-mock on http://localhost:4100 (separate
 
 To use a different app port, set `PORT` (and a matching `NEXTAUTH_URL`) in `.env`. The payments-mock port comes from `PAYMENTS_MOCK_PORT` in `.env`.
 
+## Scheduled jobs
+
+```sh
+pnpm jobs:worker                     # scheduler: approval reminders every 15 min, nightly ops summary at 02:00 UTC
+pnpm jobs:run nightly-ops-summary    # trigger a job once from the CLI
+```
+
+Admins can also trigger jobs and see their run history at `/jobs`. Slack posts go to `SLACK_WEBHOOK_URL`. If it's empty, each notification logs a one-line `slack stub:` instead.
+
 ## Logging in as each demo role
 
 Open http://localhost:3000. You'll be redirected to `/login`, which lists the demo users from the mocked OIDC IdP (`MOCK_IDP_ENABLED=true`). Roles come from each user's IdP groups, mapped in `packages/platform/src/auth/mock-idp.ts`.

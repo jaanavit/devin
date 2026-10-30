@@ -1,7 +1,7 @@
 // Server-only side effects for refunds: payments-mock calls and the Slack alert.
 import { prisma, type Refund, type SessionUser } from "@fintech/models";
 import { PlatformError } from "@fintech/platform";
-import { audit, inTransaction, outboundFetch, paymentsClient } from "@fintech/platform/server";
+import { audit, inTransaction, notify, paymentsClient } from "@fintech/platform/server";
 import { isLargeRefund, largeRefundAlertText, transactionStatusAfterRefunds } from "./policy";
 
 export type ProcessOutcome = "processed" | "failed" | "skipped";
@@ -60,26 +60,10 @@ export async function processRefund(actor: SessionUser, refundId: string): Promi
 export type AlertOutcome = "sent" | "stubbed" | "failed" | "not_needed";
 
 /**
- * Posts a Slack alert for refunds over $2,000. Skipped with a console stub when SLACK_WEBHOOK_URL
- * is empty. Failures never block the refund. TODO(Phase 7): replace with platform `notify()`.
+ * Posts a Slack alert for refunds over $2,000 via the platform `notify()` (stubbed when
+ * SLACK_WEBHOOK_URL is empty). Failures never block the refund.
  */
 export async function alertLargeRefund(refund: Pick<Refund, "id" | "transactionId" | "amountCents">): Promise<AlertOutcome> {
   if (!isLargeRefund(refund.amountCents)) return "not_needed";
-  const url = process.env.SLACK_WEBHOOK_URL;
-  if (!url) {
-    console.info(`slack stub: large refund alert for refund ${refund.id} (SLACK_WEBHOOK_URL not set)`);
-    return "stubbed";
-  }
-  try {
-    const res = await outboundFetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: largeRefundAlertText(refund) }),
-    });
-    if (res.ok) return "sent";
-    console.warn(`slack alert for refund ${refund.id} failed: HTTP ${res.status}`);
-  } catch (err) {
-    console.warn(`slack alert for refund ${refund.id} failed: ${err instanceof Error ? err.name : typeof err}`);
-  }
-  return "failed";
+  return notify({ event: "refund.large_alert", entity: { type: "refund", id: refund.id }, text: largeRefundAlertText(refund) });
 }

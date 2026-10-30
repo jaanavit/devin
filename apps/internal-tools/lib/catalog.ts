@@ -17,6 +17,8 @@ export const REFUND_APPROVER_ROLES = ["Reviewer"] as const;
 export const FLAGS_ROLES = ["Admin"] as const;
 /** Transaction investigation for Risk: Analysts (masked PII) and Reviewers (full PII, audited). */
 export const TRANSACTIONS_ROLES = ["Analyst", "Reviewer"] as const;
+/** Scheduled jobs (view runs, trigger manually): Admins only. */
+export const JOBS_ROLES = ["Admin"] as const;
 
 export const TOOLS: readonly ToolDefinition[] = [
   {
@@ -58,6 +60,14 @@ export const TOOLS: readonly ToolDefinition[] = [
     owner: "Risk",
     roles: TRANSACTIONS_ROLES,
     description: "Search all transactions, view a customer's merged timeline and linked accounts (shared device, card or address); audited CSV export.",
+  },
+  {
+    slug: "jobs",
+    name: "Scheduled jobs",
+    href: "/jobs",
+    owner: "Platform team",
+    roles: JOBS_ROLES,
+    description: "See scheduled jobs (approval reminders, nightly ops summary) and their runs; trigger a job manually.",
   },
 ];
 

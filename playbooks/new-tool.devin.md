@@ -112,7 +112,8 @@ export const GET = route(async (req) => {
   export const REFUND_POLICY: ApprovalPolicy = { kind: "refund", entityType: "Refund", approverRoles: ["Reviewer"], autoApproveMaxCents: 50_000 };
   ```
   The platform enforces approver ≠ requester and approver roles. For non-amount decisions (e.g. a KYC final decision), also check in your domain logic that the deciding user is not the preparer, and test it.
-- **Outbound calls:** only via `outboundFetch()` or `paymentsClient()`. For Slack before `notify()` exists (Phase 7), call `outboundFetch(process.env.SLACK_WEBHOOK_URL, { method: "POST", body: JSON.stringify({ text }) })` and skip the call (with `console.info("slack stub: ...")`, no PII) when the variable is empty.
+- **Outbound calls:** only via `outboundFetch()` or `paymentsClient()`. For Slack, always use `notify({ event, entity, text })` from `@fintech/platform/server`. It stubs when `SLACK_WEBHOOK_URL` is empty and never throws, so call it after the transaction commits. The `text` must contain IDs, amounts and work emails only, never PII.
+- **Scheduled work:** define a `JobDefinition` (`name`, `description`, `schedule: { everyMinutes } | { dailyAtUtc: "HH:MM" }`, `run(ctx)` returning a small non-PII summary) and add it to `JOBS` in `apps/internal-tools/lib/jobs/index.ts`. The scheduler (`pnpm jobs:worker`) runs it. Admins can trigger it from `/jobs` or with `pnpm jobs:run <name>`. Every run is recorded as a `JobRun` and audited.
 
 ## 5. Register the tool in the catalog
 

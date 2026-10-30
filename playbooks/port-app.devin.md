@@ -48,8 +48,9 @@ Grep for writers with `grep -nE "Patch\(|SubmitForm\(|Remove\(|RemoveIf\(|Update
 | Original | Replacement |
 | --- | --- |
 | Approval flows (Start and wait for an approval) | `createApprovalRequest` / `approveRequest` / `rejectRequest` with an `ApprovalPolicy` |
-| Email / Teams / Slack notification steps | `notify()` from `@fintech/platform/server` (added in Phase 7) |
-| Scheduled flows | A job in the platform job runner (added in Phase 7) |
+| Email / Teams / Slack notification steps | `notify()` from `@fintech/platform/server` |
+| "Remind approver" / escalation steps | Built in: the `approval-reminders` job reminds about any approval request pending more than 1 hour |
+| Scheduled flows | A `JobDefinition` registered in `apps/internal-tools/lib/jobs/index.ts` (see `new-tool.devin.md`) |
 | HTTP / custom connectors | A typed client using `outboundFetch()`; add the host to the allowlist and justify it in the PR (security rule 5) |
 | Office 365 Users lookups | `SessionUser` / IdP claims |
 

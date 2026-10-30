@@ -9,6 +9,8 @@ export type {
   AuditLog,
   Customer,
   FeatureFlag,
+  JobRun,
+  JobRunStatus,
   KycCase,
   KycDocument,
   KycOutcome,

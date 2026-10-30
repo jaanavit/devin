@@ -12,8 +12,13 @@ function hostOf(url: string | undefined): string | undefined {
   }
 }
 
+/**
+ * Hosts configured by env (payments-mock runs on a deployment-specific host). Slack is deliberately
+ * NOT taken from `SLACK_WEBHOOK_URL`: webhooks always live on hooks.slack.com (static entry), so a
+ * misconfigured or tampered webhook URL cannot redirect notifications to another host.
+ */
 export function allowedOutboundHosts(env: NodeJS.ProcessEnv = process.env): string[] {
-  const fromEnv = [env.PAYMENTS_MOCK_URL, env.SLACK_WEBHOOK_URL, env.LLM_API_URL, env.DEVIN_API_URL].map(hostOf);
+  const fromEnv = [env.PAYMENTS_MOCK_URL, env.LLM_API_URL, env.DEVIN_API_URL].map(hostOf);
   return [...STATIC_ALLOWED_HOSTS, ...fromEnv.filter((h): h is string => Boolean(h))];
 }
 
