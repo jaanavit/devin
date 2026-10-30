@@ -2,7 +2,7 @@
 
 Use this to build any new tool in `apps/internal-tools`. Follow the steps in order. Security rules are in `docs/CONVENTIONS.md`; they are non-negotiable.
 
-**Inputs you need from the request:** tool name (kebab-case slug), owner team, users and roles (`Analyst` | `Reviewer` | `Admin`), data (new or existing models), actions, approval rules, and any notifications.
+**Inputs you need from the request:** tool name (kebab-case slug), owner team, users and roles (`Analyst` | `Reviewer` | `Admin`), data (new or existing models), actions, approval rules, notifications, and lifecycle (`permanent`, or `short-lived` with when it can be removed). Requests normally arrive in the format of `docs/requesting-a-tool.md`. If an input is missing or ambiguous, ask in the request thread before building. Never guess roles or approval rules.
 
 ---
 
@@ -125,6 +125,8 @@ export const MY_TOOL_ROLES = ["Analyst", "Reviewer"] as const;
 { slug: "my-tool", name: "My tool", href: "/my-tool", owner: "<Team>", roles: MY_TOOL_ROLES, description: "<one line>" },
 ```
 
+For a short-lived tool, add `lifecycle: "short-lived"` to the entry (the catalog shows a "Short-lived" badge) and mention the removal condition in `description`.
+
 The middleware then denies every other role on `/my-tool/**` with HTTP 403, and the nav and catalog pick the tool up automatically. `apps/internal-tools/middleware.test.ts` iterates `TOOLS`, so the new entry gets middleware RBAC coverage for all 6 demo users with no extra work.
 
 ## 6. Tests
@@ -181,3 +183,13 @@ Update `SUMMARY.md` (what was built, deviations, rule exceptions, stubs, gaps). 
 - [ ] lint / typecheck / test / build
 - [ ] RBAC + audit tests per route/action
 ```
+
+## 8. Removing a short-lived tool (follow-up PR)
+
+Once the owner confirms a short-lived tool has done its job:
+
+1. Delete `apps/internal-tools/app/(tools)/<tool-name>/` (routes, actions, `_lib`, tests).
+2. Remove its entry and roles constant from `apps/internal-tools/lib/catalog.ts`.
+3. Remove anything else that only it used (jobs in `lib/jobs`, seed fixtures). Keep schema changes unless the owner asks otherwise. Data and audit rows stay; the audit log is append-only.
+4. Run `pnpm lint && pnpm typecheck && pnpm policy && pnpm test && pnpm build`.
+5. Open a PR titled **`tool: remove <name>`** that links the original `tool: <name>` PR and records in `SUMMARY.md` what the tool did (e.g. rows changed, per its audit trail).
