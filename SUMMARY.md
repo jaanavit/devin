@@ -4,11 +4,23 @@ Running log of what was built per phase, deviations, security exceptions, stubs,
 
 ## Open blockers / questions
 
-- **No GitHub remote / `gh` auth.** The `gh` token on the build machine is invalid and no remote is configured, so PRs cannot be opened yet. Each phase is committed on its own stacked local branch (`phase-0-setup` → `phase-1-platform` → …). PR descriptions are recorded below so they can be opened as-is once a remote exists (`gh auth login`, `git remote add origin …`, `git push -u origin --all`).
+- None open. (Resolved: GitHub remote. The code lives in the private repo `jaanavit/devin`; `main` starts with an empty "Initial commit" so Phase 0 could be opened as a PR.)
+
+## Pull requests
+
+| Phase | Branch | PR | Base |
+| --- | --- | --- | --- |
+| 0 Repo setup | `phase-0-setup` | [#1](https://github.com/jaanavit/devin/pull/1) | `main` |
+| 1 Platform | `phase-1-platform` | [#2](https://github.com/jaanavit/devin/pull/2) | `phase-0-setup` |
+| 2 Playbooks | `phase-2-playbooks` | [#3](https://github.com/jaanavit/devin/pull/3) | `phase-1-platform` |
+| 3 KYC review queue | `phase-3-kyc` | [#5](https://github.com/jaanavit/devin/pull/5) | `phase-2-playbooks` |
+| 4 Refunds | `phase-4-refunds` | [#6](https://github.com/jaanavit/devin/pull/6) | `phase-2-playbooks` |
+| 5 Feature flags | `phase-5-flags` | [#4](https://github.com/jaanavit/devin/pull/4) | `phase-2-playbooks` |
+| 3+4+5 combined | `phase-3-4-5-integration` | (base for Phase 6) | `phase-2-playbooks` |
 
 ## Phase 0 — Repo setup
 
-**Branch:** `phase-0-setup` (PR: _pending remote_)
+**Branch:** `phase-0-setup` (PR [#1](https://github.com/jaanavit/devin/pull/1))
 
 Built:
 - pnpm workspace monorepo with the spec layout (`packages/models`, `packages/platform`, `services/payments-mock`, `apps/internal-tools`, `scripts/`, `playbooks/`, `docs/`).
@@ -27,7 +39,7 @@ Decisions / deviations:
 
 ## Phase 1 — Platform
 
-**Branch:** `phase-1-platform` (PR: _pending remote_)
+**Branch:** `phase-1-platform` (PR [#2](https://github.com/jaanavit/devin/pull/2))
 
 Built:
 - **Models** (`packages/models`): User, AuditLog, ApprovalRequest, Customer, Transaction, KycCase, KycDocument, Refund, FeatureFlag, plus enums. `@fintech/models/shared` holds pure types (`Role`, `SessionUser`, `PII_FIELDS`) that are safe for edge and client code, with a compile-time check that they stay in sync with Prisma. `@fintech/models/payments` is the payments-mock wire contract.
@@ -64,7 +76,7 @@ Stubs / needed to make real:
 
 ## Phase 2 — Playbooks
 
-**Branch:** `phase-2-playbooks` (PR: _pending remote_)
+**Branch:** `phase-2-playbooks` (PR [#3](https://github.com/jaanavit/devin/pull/3))
 
 Built:
 - `playbooks/new-tool.devin.md`: the step-by-step procedure for building a tool, using the real Phase 1 names and paths (`requirePageRole`, `requireRole`, `runAction`, `audit(..., tx)`, `maskForViewer`, `createApprovalRequest`/`approveRequest`/`rejectRequest`, `outboundFetch`, the `lib/catalog.ts` registration, and the `@fintech/platform/testing` helpers). It includes copy-paste patterns for pages, actions and route handlers, the PR template, and the `tool: <name>` title.
@@ -76,9 +88,65 @@ Built:
 Decisions:
 - **Phases 3, 4 and 5 are built in parallel** in separate git worktrees (`~/fit-p3`, `~/fit-p4`, `~/fit-p5`), each branched from `phase-2-playbooks` with its own databases and ports. This deviates from strictly stacked PRs: 3, 4 and 5 are siblings, and each one's PR targets `phase-2-playbooks`. Expect small merge conflicts in `schema.prisma`, `lib/catalog.ts`, `scripts/seed*` and this file when they're combined before Phase 6.
 
+## Phase 3 — KYC review queue
+
+**Branch:** `phase-3-kyc` (from `phase-2-playbooks`; PR [#5](https://github.com/jaanavit/devin/pull/5) `tool: kyc-review-queue`)
+
+Built (following `playbooks/new-tool.devin.md`):
+- **Catalog entry** `kyc` → `/kyc`, owner Compliance, roles `KYC_ROLES = [Analyst, Reviewer]` (`lib/catalog.ts`). `KYC_PREPARER_ROLES = [Analyst]` and `KYC_DECIDER_ROLES = [Reviewer]` gate the actions. Admins get 403 from both the middleware and `requirePageRole`.
+- **`/kyc` list:** `DataTable` + `FilterBar` with filters for status, risk level and assignee (me / unassigned / a specific Analyst), plus server-side pagination and sorting. It shows SLA age and an SLA due/overdue badge, and defaults to sorting by SLA due date, soonest first. No PII is loaded on the list.
+- **`/kyc/[id]` detail:** customer info (SSN, DOB, address and document number go through `maskForViewer`), case info, documents list, the Analyst recommendation, the Reviewer decision, and history (the case's mutation audit rows). The page also has the Queue claim/unclaim control, the recommendation form (only for the assignee) and the final-decision form (only for a Reviewer who did not prepare the case). The preparer sees "You prepared this case, so another Reviewer must make the final decision" instead of the form. The document `fixture` JSON, which holds the printed DOB and document number, is never selected.
+- **Server actions** (`actions.ts`): `claimCase`, `unclaimCase`, `recommendCase` (outcome + required notes), `decideCase` (outcome + required reason). Each one calls `requireRole` first inside `runAction`, re-loads the case, checks the pure `_lib/rules.ts` blockers, applies a conditional `updateMany` keyed on the expected status and assignee (otherwise a `ConflictError`), and calls `audit(..., tx)` in the same transaction.
+- **Maker-checker:** `recommendCase` opens an approval request with `createApprovalRequest` under `KYC_DECISION_POLICY` (`kind: kyc_decision`, approver role Reviewer, no amount so it never auto-approves). `decideCase` first checks in domain logic that the decider didn't prepare the case (`decideBlocker` → `ApprovalError("SELF_APPROVAL")`, 403 `self_approval`). It then calls `approveRequest` or `rejectRequest` in the same transaction, so the platform also enforces approver ≠ requester.
+- **Audit:** `kyc_case.view` on every detail render (every role). `pii.view` (field names only) when a Reviewer gets unmasked values. `kyc_case.claim`, `kyc_case.unclaim`, `kyc_case.recommend` and `kyc_case.decide` include before/after (`documentNumber` is redacted by `audit()`) and metadata (outcome, approval request id). `approval.request`, `approval.approve` and `approval.reject` come from the platform.
+- **Data:** one migration (`kyc_queue_indexes`) adds indexes on `KycCase.riskLevel` and `KycCase.slaDueAt`, which the list filters and sorts on. The other filters already had indexes. The seed now creates a `kyc_decision` approval request for every recommended case (PENDING) and every decided case (APPROVED/REJECTED), so seeded cases can be decided through the same path. The worktree DB was re-seeded with 50K transactions.
+
+Verification:
+- `pnpm lint`, `typecheck`, `test` (85 tests, 26 of them new in `kyc.test.ts`, plus one new seed test) and `build` all pass.
+- Tests cover RBAC for both pages (anonymous → /login; Admin → 403; Analyst and Reviewer render) and every action (wrong role → `forbidden`). They check the audit rows written by every action and by the view. Analysts get masked SSN/DOB/address/document number in the rendered HTML with no `pii.view` row. Reviewers get full values plus a `pii.view` row, and no PII values appear in the audit rows. Self-decision is blocked in the server action (`self_approval`, with the case and approval request unchanged and no `kyc_case.decide` row) and in the UI (the rendered page for the preparer has no decision form but another Reviewer's does). Tests also cover required reason/notes, stale/invalid state, the reject path, the full claim → recommend → decide flow, and `_lib` unit tests for the blockers, filters and SLA.
+- Manual end-to-end against `pnpm dev` (:3003) with real Auth.js sign-in, submitting the server-action forms over HTTP. Alice claims and recommends `kyc_0002`, then Rita approves it: the case and its approval request end APPROVED and the audit trail is complete. Alice sees `•••-••-NNNN` and Rita sees full values with `pii.view` audited. Sam claims and recommends `kyc_0003` and gets no decision form. When Sam replays Rita's decision form, the server rejects it and the case stays RECOMMENDED. Ada gets 403 on `/kyc` and `/kyc/[id]`. `scripts/smoke.sh` shows 200 for alice, rita and sam and 403 for ada.
+
+Decisions / deviations:
+- **Who does what:** only Analysts claim and recommend, and only Reviewers decide. Sam (Analyst + Reviewer) can do both, but never on the same case. The "preparer" is whoever claimed or recommended the case. Unclaiming is only allowed by the assignee while the case is IN_REVIEW.
+- **Mapping the decision to the approval primitive:** a final APPROVE calls `approveRequest`, and a final REJECT calls `rejectRequest`. The reviewer's reason is stored on both the case and the approval request, and the reviewer can decide against the analyst's recommendation.
+- **Every detail render is a view.** That includes the re-render after a form submission, so one visit can produce several `kyc_case.view` rows. History on the page hides view rows and shows only mutations.
+- **Test harness fix (`scripts/test/setup.ts`, not platform):** the global `vi.mock("next/cache")` from Phase 2 never applied. `next` isn't installed at the repo root, so the bare id didn't resolve, and the first server action under test failed with "static generation store missing". The setup file now resolves `next/cache` from `apps/internal-tools` and mocks that exact file with `vi.doMock`.
+- `kyc.test.ts` imports `KYC_DECISION_KIND` from `scripts/seed/generate.ts` to make sure the seed and the tool's policy use the same approval kind.
+
+Platform changes: **none** (`packages/platform` is untouched). Schema change in `packages/models`: two indexes only.
+
+Security rule exceptions: none.
+
+Known gaps / next steps:
+- Denied self-decision attempts return 403 but aren't audited themselves. A `kyc_case.decide_denied` row would help with surveillance.
+- Documents are a metadata list only (no file storage or viewer). Phase 3b (Assist panel / LLM extraction) was skipped as instructed.
+- No "send back to analyst" path from RECOMMENDED. A reviewer who disagrees records the opposite decision with a reason.
+- Expect merge conflicts with Phases 4 and 5 in `lib/catalog.ts`, `schema.prisma` and its migrations, `scripts/seed*`, `scripts/test/setup.ts` (if they also hit the mock issue) and this file.
+
+PR description:
+```
+## Screens
+- /kyc — queue list (filters: status, risk, assignee; SLA age + overdue badge; server-side pagination/sort)
+- /kyc/[id] — case detail (customer PII via maskForViewer, documents, recommendation, decision, history; claim/unclaim, recommend, decide forms)
+## Roles
+- Analyst: view (masked PII), claim/unclaim, recommend. Reviewer: view (full PII, audited), final decision (never on a case they prepared). Admin: no access
+## Security
+- Audited actions: kyc_case.view, pii.view, kyc_case.claim, kyc_case.unclaim, kyc_case.recommend, kyc_case.decide, approval.request/approve/reject
+- PII fields shown via maskForViewer: ssn, dob, address, documentNumber
+- Approvals: KYC_DECISION_POLICY (kind kyc_decision, approver Reviewer, no auto-approve); preparer ≠ decider enforced in domain logic and by the platform
+- Outbound calls: none
+## Rule exceptions
+- None
+## Platform changes
+- None (test setup fix in scripts/test/setup.ts so the global next/cache mock applies)
+## Test plan
+- [x] lint / typecheck / test / build
+- [x] RBAC + audit tests per route/action; self-decision blocked in UI and server action
+```
+
 ## Phase 4 — Refunds dashboard
 
-**Branch:** `phase-4-refunds`, branched from `phase-2-playbooks` (PR `tool: refunds`: _pending remote_)
+**Branch:** `phase-4-refunds`, branched from `phase-2-playbooks` (PR [#6](https://github.com/jaanavit/devin/pull/6) `tool: refunds`)
 
 Built (following `playbooks/new-tool.devin.md`):
 - **`/refunds`** (Analyst, Reviewer): a list of refunds showing status, amount, customer, transaction and requester. It has server-side pagination and sorting, plus a status filter. **Search by customer (ID or name prefix) or transaction ID goes through payments-mock** (`paymentsClient().searchTransactions`). The matching transaction and customer IDs then filter the refund list. If payments-mock is down, the page shows an error instead of crashing.
@@ -142,3 +210,90 @@ PR description (`tool: refunds`):
 - [x] RBAC + audit tests per route/action
 - [x] $499 auto-approves, $501 waits for a second Reviewer, approved refunds appear in the payments-mock log, > $2,000 alerts Slack
 ```
+
+## Phase 5 — Feature-flag admin
+
+**Branch:** `phase-5-flags` (PR [#4](https://github.com/jaanavit/devin/pull/4) `tool: feature-flags`, targets `phase-2-playbooks`)
+
+Built (following `playbooks/new-tool.devin.md`):
+- **`/flags`** (Admin only): `DataTable` of every flag × environment with environment tabs (All / dev / staging / prod), a `FilterBar` (environment, key prefix), server-side pagination and sort by key. Shows status, rollout %, description and last update.
+- **`/flags/[id]`**: `DetailView` of the current state, a **Turn on/off** form and a **Set rollout** form (0–100, whole numbers), and the flag's change history (last 20 audit rows, with a link into the audit viewer). Prod flags show a warning and the reason field is `required`.
+- **Server actions** (`flags/actions.ts`): `toggleFlag` and `setRollout`. Each one calls `requireRole(["Admin"])` first, re-loads the flag, validates the reason for the flag's environment, applies the change with a compare-and-set `updateMany` on the current `enabled`/`rolloutPercentage` (a concurrent edit returns `conflict`), sets `updatedById`, and writes the audit row in the same transaction.
+- **Audit:** `feature_flag.toggle` and `feature_flag.set_rollout` on `FeatureFlag:<id>`, with `before`/`after` = `{ key, environment, enabled, rolloutPercentage }` and `metadata` = `{ environment, key, reason }`.
+- **Prod rules:** a non-blank reason (≤ 500 chars) is required server-side for any prod change; outside prod it's optional and still recorded. After the transaction commits, prod changes post to Slack via `outboundFetch(process.env.SLACK_WEBHOOK_URL, …)` (`flags/_lib/slack.ts`). The message carries the flag key, environment, before → after, the actor's work email and the reason.
+- **Catalog:** `flags` registered in `lib/catalog.ts` with `FLAGS_ROLES = ["Admin"]`, so middleware returns 403 to everyone else and `middleware.test.ts` covers it for all 6 demo users.
+- **Tests:** 32 new ones. `flags.test.ts` (DB) covers RBAC on both pages and both actions (anonymous, Analyst, Reviewer, and Analyst+Reviewer `sam` all denied; nothing changed or audited), before/after audit rows, prod reason required (no change, no audit, no Slack), the Slack stub with no actor email or reason in the log line, a real webhook POST when `SLACK_WEBHOOK_URL` is set (fetch mocked), Slack failure not rolling back the change, no-op/invalid input and unknown flags. `_lib/rules.test.ts` holds the unit tests for reason, rollout and enabled parsing and for the Slack text.
+
+Verification:
+- `pnpm lint`, `pnpm typecheck`, `pnpm test` (90 tests) and `pnpm build` all pass.
+- Over HTTP on :3005 with `scripts/smoke.sh`, Ada gets 200 on `/flags`, `/flags?environment=prod` and `/flags/<prod id>`, while Alice, Rita and Sam get 403 on all three.
+
+Decisions / deviations:
+- **No schema change or migration.** The Phase 1 `FeatureFlag` model already had everything needed. The prod reason lives in the audit row's `metadata` rather than a column, because the audit log is the system of record for change history. List filters use the existing `@@index([environment])` and the `@@unique([key, environment])` index (key prefix and sort), so sorting is restricted to `key`.
+- **Two actions instead of one generic "update":** toggling and changing rollout are separate audited verbs, which keeps the audit log and Slack messages unambiguous. Submitting the current value is rejected (`conflict` / `no_change`) so no empty audit rows are written.
+- **Rollout is independent of on/off.** Turning a flag off keeps its percentage, and the effective exposure is `enabled ? rolloutPercentage : 0`. The UI says the percentage only applies while the flag is on.
+- **Slack runs after commit and is best-effort.** A Slack outage never blocks or rolls back a flag change. Failures are logged with only the flag key and the HTTP status or error class. When `SLACK_WEBHOOK_URL` is empty the change is logged as `console.info("slack stub: <action> on prod flag <key> …")`, with no actor or reason. Phase 7 will replace `_lib/slack.ts` with `notify()`.
+- **Fixed the global `next/cache` test mock** (`scripts/test/setup.ts`). `next` can't be resolved from the repo root, so `vi.mock("next/cache")` never matched the module the app imports, and any server action calling `revalidatePath()` failed under test with "static generation store missing". Phases 1–2 never exercised a server action, so nobody noticed. The setup now mocks the path that `apps/internal-tools` actually resolves to. Phases 3 and 4 will need the same fix, or will conflict with it on merge.
+
+Security rule exceptions:
+- None. Free-text reasons go to Slack by design: they're the justification reviewers need. Admins should keep customer data out of reasons. Slack messages include the acting Admin's work email (staff identity, not customer PII).
+
+Platform changes:
+- None. `packages/platform` is untouched.
+
+Stubs / needed to make real:
+- `SLACK_WEBHOOK_URL`: unset here, so prod changes are logged by the console stub. Set it to an `https://hooks.slack.com/…` incoming-webhook URL (the host is already allowlisted).
+
+Known gaps / next steps:
+- No create/delete/archive of flags and no per-segment targeting. The spec only asks for toggle and rollout.
+- No maker-checker on prod flag changes (the spec only asks for a reason). Routing prod changes through the `approval` primitive would be easy to add if the client wants it.
+- Prod changes have not been posted to a real Slack workspace yet, because no webhook URL is available. The tests confirm the POST with a mocked fetch.
+
+## Phase 6 — Transaction investigation
+
+**Branch:** `phase-6-transactions`, stacked on `phase-3-4-5-integration` (PR: see table above once opened)
+
+Built (following `playbooks/new-tool.devin.md`):
+- **Catalog entry** `transactions` → `/transactions`, owner Risk, roles `TRANSACTIONS_ROLES = [Analyst, Reviewer]`. Admins get 403.
+- **`/transactions` search** over all 500K transactions by customer (exact `cus_…` ID, or case-insensitive name prefix resolved to at most 500 customers with a warning when capped), transaction ID, merchant (select), amount range ($) and date range. Server-side pagination; sort by date or amount (with `id` as a tiebreaker for stable paging). Invalid filters show a message instead of failing.
+- **Customer view** `/transactions/customers/[id]`:
+  - profile with SSN, DOB and address through `maskForViewer`; the view is audited as `customer.view` for every role, plus `pii.view` for Reviewers;
+  - **timeline** merging transactions (200 most recent; all refunds and KYC events are always included), refunds (requested and paid out) and KYC events (opened, claimed, recommended, decided), newest first with deterministic tie-breaking (`_lib/customer.ts`, unit-tested);
+  - **linked accounts**: other customers sharing a device ID, card fingerprint or address hash, one row per customer with badges for each shared identifier, strongest links first.
+- **CSV export** `/transactions/export` for the current filters, capped at 50,000 rows, audited as `transaction.export` with the filters, row count and truncation flags. It contains no PII fields, so it's the same for every role.
+- **Indexes** (migration `transaction_search_indexes`): `Transaction(createdAt)`, `(merchant, createdAt)`, `(amountCents)`, `(deviceId)`, `(cardFingerprint)`.
+- `pnpm bench:search` (`scripts/bench/transaction-search.ts`) times the exact queries the page runs (paged rows + total count), 7 runs per case after a warm-up.
+
+Search timings on the full seed (500,000 transactions, Homebrew Postgres 16 on the build laptop), median / max of 7 runs:
+
+| Search | Matches | Before indexes (ms) | After indexes (ms) |
+| --- | ---: | ---: | ---: |
+| No filters (newest first) | 500,000 | 69.4 / 71.7 | 23.5 / 28.0 |
+| Transaction ID | 1 | 2.2 / 3.1 | 1.7 / 6.9 |
+| Customer ID | 24 | 1.2 / 2.2 | 1.3 / 2.6 |
+| Customer name prefix ("Olivia") | 9,915 | 32.8 / 40.6 | 18.1 / 20.4 |
+| Merchant | 25,035 | 55.2 / 61.9 | 5.0 / 7.2 |
+| Amount $1,000–$1,500 | 25,269 | 33.2 / 34.6 | 4.6 / 6.7 |
+| Last 7 days | 9,659 | 38.4 / 41.6 | 3.8 / 6.1 |
+| Merchant + amount + 30 days | 460 | 38.2 / 40.6 | 9.0 / 9.3 |
+| Amount ≥ $2,000, sorted by amount | 25,289 | 44.9 / 46.9 | 5.6 / 6.6 |
+| Merchant, page 200 | 24,960 | 39.0 / 41.6 | 9.3 / 12.1 |
+
+Slowest single search: **28 ms** after indexes (target < 1,000 ms). Full page loads over HTTP with real sign-in: 35–190 ms (the 190 ms was the first, cold request).
+
+Verification:
+- 18 new tests (159 total): filter parsing and validation; search correctness for each filter, name-prefix case-insensitivity, amount sort and paging; timeline ordering and tie-breaks; linked-account grouping and lookup; **the seeded fraud ring (`generateFraudRing`) shows up as linked accounts**, and every ring member links to at least one other; page RBAC (anonymous → /login, Admin 403, 404 for unknown customers); Analyst sees masked PII with only `customer.view` audited; Reviewer sees full PII with `customer.view` + `pii.view`, and no PII in audit rows; export RBAC (401/403), filtered CSV without PII, export audited, invalid filters → 400 with no audit row.
+- Mutation check: reversing the timeline sort or bypassing `maskForViewer` makes 4 tests fail.
+- Manual check on the full seed as Aaron (Risk analyst): `cus_900001` lists `cus_900002`–`cus_900007` as linked accounts. `cus_900008` is in the ring via a shared card with other members but shares nothing directly with `cus_900001`.
+
+Decisions / deviations:
+- **Reviewers can use the tool too** (the spec says "Risk analysts"). This is what makes "PII masked by role" meaningful: Analysts see masked values, Reviewers see full values and the reveal is audited.
+- **Searches themselves are not audited**; customer views and exports are. Auditing every search would flood the log with low-value rows.
+- **Customer name search** uses a two-step lookup (resolve up to 500 matching customers, then filter transactions by `customerId`), which uses the existing `(customerId, createdAt)` index. A trigram index would allow substring search; not needed for the spec.
+- The page's merchant dropdown comes from `groupBy(merchant)`, which uses the new merchant index.
+
+Platform changes: none. Security rule exceptions: none.
+
+Known gaps / next steps:
+- Linked accounts are one hop. A graph view (multi-hop, e.g. to reach `cus_900008` from `cus_900001`) would help ring investigations.
+- Deep OFFSET pagination gets slower on very large result sets; keyset pagination would fix it if needed.

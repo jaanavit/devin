@@ -71,6 +71,7 @@ async function main(): Promise<void> {
   const kyc = generateKyc(rng, customers.slice(0, CUSTOMERS), KYC_CASES, now, { analysts: ["u_alice", "u_sam"], reviewer: "u_rita" });
   await prisma.kycCase.createMany({ data: kyc.cases });
   await prisma.kycDocument.createMany({ data: kyc.documents });
+  await prisma.approvalRequest.createMany({ data: kyc.approvals });
 
   console.log(`Inserting ${refundCandidates.length} refunds (+ approval requests)...`);
   const refunds = generateRefunds(rng, refundCandidates, now, { requesters: ["u_aaron", "u_alice"], approvers: ["u_felix", "u_rita"] });

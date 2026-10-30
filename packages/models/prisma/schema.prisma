@@ -135,6 +135,13 @@ model Transaction {
   refunds Refund[]
 
   @@index([customerId, createdAt])
+  // Transaction investigation (Phase 6): default newest-first sort / date range, merchant filter,
+  // amount range and sort, and linked-account lookups by shared device or card.
+  @@index([createdAt])
+  @@index([merchant, createdAt])
+  @@index([amountCents])
+  @@index([deviceId])
+  @@index([cardFingerprint])
 }
 
 enum KycStatus {
@@ -180,6 +187,8 @@ model KycCase {
   @@index([status, openedAt])
   @@index([assigneeId])
   @@index([customerId])
+  @@index([riskLevel])
+  @@index([slaDueAt])
 }
 
 model KycDocument {
