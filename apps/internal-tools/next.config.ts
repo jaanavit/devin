@@ -12,6 +12,8 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@fintech/platform", "@fintech/models"],
   serverExternalPackages: ["@prisma/client"],
   poweredByHeader: false,
+  // Enables `forbidden()` so role-denied pages render app/forbidden.tsx with HTTP 403.
+  experimental: { authInterrupts: true },
 };
 
 export default nextConfig;

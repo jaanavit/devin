@@ -39,6 +39,25 @@ pnpm dev                      # http://localhost:3000
 pnpm dev:payments             # payments-mock on http://localhost:4100 (separate terminal)
 ```
 
+To use a different app port, set `PORT` (and a matching `NEXTAUTH_URL`) in `.env`. The payments-mock port comes from `PAYMENTS_MOCK_PORT` in `.env`.
+
+## Logging in as each demo role
+
+Open http://localhost:3000. You'll be redirected to `/login`, which lists the demo users from the mocked OIDC IdP (`MOCK_IDP_ENABLED=true`). Roles come from each user's IdP groups, mapped in `packages/platform/src/auth/mock-idp.ts`.
+
+| User | IdP groups | Roles |
+| --- | --- | --- |
+| Alice Analyst | grp-compliance-analysts | Analyst |
+| Aaron Support | grp-support-agents, grp-risk-analysts | Analyst |
+| Rita Reviewer | grp-compliance-reviewers | Reviewer |
+| Felix Finance | grp-finance-approvers | Reviewer |
+| Ada Admin | grp-platform-admins | Admin |
+| Sam Senior | grp-compliance-analysts, grp-compliance-reviewers | Analyst + Reviewer |
+
+Use "Sign out / switch user" in the sidebar to change users. Sam holds both roles, so he's the user to test maker-checker with: he can prepare a request but can never approve his own.
+
+From the command line, `scripts/smoke.sh u_ada /audit` signs in as a demo user and prints HTTP status codes.
+
 ## Scripts
 
 | Command | What it does |

@@ -13,6 +13,7 @@
     "@fintech/models": "workspace:*"
   },
   "devDependencies": {
+    "@fintech/platform": "workspace:*",
     "dotenv-cli": "8.0.0"
   }
 }
