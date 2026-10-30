@@ -7,6 +7,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ---------------------------------------------------------------------------
+// Identity & governance
+// ---------------------------------------------------------------------------
+
 enum Role {
   Analyst
   Reviewer
@@ -21,4 +25,223 @@ model User {
   idpGroups String[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  approvalRequests  ApprovalRequest[] @relation("ApprovalRequester")
+  approvalDecisions ApprovalRequest[] @relation("ApprovalDecider")
+  assignedKycCases  KycCase[]         @relation("KycAssignee")
+  refundsRequested  Refund[]          @relation("RefundRequester")
+}
+
+/// Append-only. UPDATE/DELETE/TRUNCATE are blocked by database triggers (see migration).
+/// `actorId` is intentionally not a foreign key: system actors (jobs, webhooks) also write audit rows.
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String
+  actorEmail String
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@index([action, createdAt])
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  AUTO_APPROVED
+}
+
+model ApprovalRequest {
+  id             String         @id @default(cuid())
+  kind           String
+  entityType     String
+  entityId       String
+  amountCents    Int?
+  approverRoles  Role[]
+  status         ApprovalStatus @default(PENDING)
+  requesterId    String
+  requester      User           @relation("ApprovalRequester", fields: [requesterId], references: [id])
+  decidedById    String?
+  decidedBy      User?          @relation("ApprovalDecider", fields: [decidedById], references: [id])
+  decisionReason String?
+  decidedAt      DateTime?
+  lastReminderAt DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([status, createdAt])
+  @@index([entityType, entityId])
+}
+
+// ---------------------------------------------------------------------------
+// Product domain
+// ---------------------------------------------------------------------------
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+/// PII fields: ssn, dob, address. Always pass through `mask()` before display.
+model Customer {
+  id          String    @id
+  name        String
+  email       String
+  ssn         String
+  dob         DateTime  @db.Date
+  address     String
+  addressHash String
+  riskLevel   RiskLevel @default(LOW)
+  createdAt   DateTime  @default(now())
+
+  transactions Transaction[]
+  kycCases     KycCase[]
+  refunds      Refund[]
+
+  @@index([addressHash])
+  @@index([name])
+}
+
+enum TransactionStatus {
+  SETTLED
+  PENDING
+  DECLINED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+model Transaction {
+  id                   String            @id
+  customerId           String
+  customer             Customer          @relation(fields: [customerId], references: [id])
+  amountCents          Int
+  currency             String            @default("USD")
+  merchant             String
+  merchantCategoryCode String?
+  status               TransactionStatus
+  deviceId             String
+  cardFingerprint      String
+  createdAt            DateTime
+
+  refunds Refund[]
+
+  @@index([customerId, createdAt])
+}
+
+enum KycStatus {
+  OPEN
+  IN_REVIEW
+  RECOMMENDED
+  APPROVED
+  REJECTED
+}
+
+enum KycOutcome {
+  APPROVE
+  REJECT
+}
+
+/// PII fields: documentNumber. Always pass through `mask()` before display.
+model KycCase {
+  id                  String      @id
+  customerId          String
+  customer            Customer    @relation(fields: [customerId], references: [id])
+  status              KycStatus   @default(OPEN)
+  riskLevel           RiskLevel
+  documentType        String
+  documentNumber      String
+  documentExpiry      DateTime?   @db.Date
+  assigneeId          String?
+  assignee            User?       @relation("KycAssignee", fields: [assigneeId], references: [id])
+  claimedAt           DateTime?
+  recommendation      KycOutcome?
+  recommendationNotes String?
+  recommendedById     String?
+  recommendedAt       DateTime?
+  decision            KycOutcome?
+  decisionReason      String?
+  decidedById         String?
+  decidedAt           DateTime?
+  slaDueAt            DateTime
+  openedAt            DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  documents KycDocument[]
+
+  @@index([status, openedAt])
+  @@index([assigneeId])
+  @@index([customerId])
+}
+
+model KycDocument {
+  id         String   @id
+  caseId     String
+  case       KycCase  @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  kind       String
+  fileName   String
+  /// Synthetic fixture data describing what is printed on the document (used by demo extraction).
+  fixture    Json?
+  uploadedAt DateTime @default(now())
+
+  @@index([caseId])
+}
+
+enum RefundStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PROCESSED
+  FAILED
+}
+
+model Refund {
+  id                String       @id @default(cuid())
+  transactionId     String
+  transaction       Transaction  @relation(fields: [transactionId], references: [id])
+  customerId        String
+  customer          Customer     @relation(fields: [customerId], references: [id])
+  amountCents       Int
+  reason            String
+  status            RefundStatus
+  requestedById     String
+  requestedBy       User         @relation("RefundRequester", fields: [requestedById], references: [id])
+  approvalRequestId String?      @unique
+  externalRefundId  String?
+  processedAt       DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([status, createdAt])
+  @@index([customerId])
+  @@index([transactionId])
+}
+
+enum Environment {
+  dev
+  staging
+  prod
+}
+
+model FeatureFlag {
+  id                String      @id @default(cuid())
+  key               String
+  description       String
+  environment       Environment
+  enabled           Boolean     @default(false)
+  rolloutPercentage Int         @default(0)
+  updatedById       String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@unique([key, environment])
+  @@index([environment])
 }
