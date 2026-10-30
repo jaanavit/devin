@@ -1,0 +1,16 @@
+packages:
+  - "packages/*"
+  - "services/*"
+  - "apps/*"
+
+# Supply-chain guard: only resolve package versions published at least 7 days ago.
+minimumReleaseAge: 10080
+
+onlyBuiltDependencies:
+  - "@prisma/client"
+  - "@prisma/engines"
+  - "@tailwindcss/oxide"
+  - esbuild
+  - prisma
+  - sharp
+  - unrs-resolver

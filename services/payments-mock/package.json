@@ -1,0 +1,18 @@
+{
+  "name": "@fintech/payments-mock",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "dotenv -e ../../.env -- tsx watch src/main.ts",
+    "start": "dotenv -e ../../.env -- tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fintech/models": "workspace:*"
+  },
+  "devDependencies": {
+    "dotenv-cli": "8.0.0"
+  }
+}
